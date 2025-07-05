@@ -133,6 +133,13 @@ user:{auth0_id} -> JSON user object
 user_email:{email} -> auth0_id
 ```
 
+## Documentation
+
+Comprehensive documentation is available in the `docs/` folder:
+
+- **[Authentication Flow](./docs/authentication-flow.md)**: Detailed guide covering Auth0 integration, signup/signin flows, backend processing, API endpoints, and troubleshooting
+- **[Documentation Index](./docs/README.md)**: Overview of all available documentation
+
 ## Next Steps
 
 This setup provides a solid foundation with authentication. You can now add:
