@@ -34,6 +34,18 @@ class AuthService:
     def verify_token(self, token: str) -> Dict[str, Any]:
         """Verify Auth0 JWT token"""
         try:
+            # Debug: Log token format
+            token_parts = token.split('.')
+            logger.info(f"Token has {len(token_parts)} parts")
+            
+            # JWT should have exactly 3 parts
+            if len(token_parts) != 3:
+                logger.error(f"Invalid token format: {len(token_parts)} parts. Expected JWT with 3 parts.")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token format"
+                )
+            
             # Get the public key
             jwks = self.get_auth0_public_key()
             

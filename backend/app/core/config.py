@@ -9,16 +9,16 @@ class Settings(BaseSettings):
     DESCRIPTION: str = "AI-powered course creation platform"
     
     # Redis configuration
-    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
-    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
-    REDIS_URL: str = f"redis://{REDIS_HOST}:{REDIS_PORT}"
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_URL: str = "redis://localhost:6379"
     
     # Auth0 configuration
-    AUTH0_DOMAIN: str = os.getenv("AUTH0_DOMAIN", "")
-    AUTH0_CLIENT_ID: str = os.getenv("AUTH0_CLIENT_ID", "")
-    AUTH0_API_AUDIENCE: str = os.getenv("AUTH0_API_AUDIENCE", "")
+    AUTH0_DOMAIN: str = ""
+    AUTH0_CLIENT_ID: str = ""
+    AUTH0_API_AUDIENCE: str = ""
     AUTH0_ALGORITHMS: List[str] = ["RS256"]
-    AUTH0_ISSUER: str = f"https://{AUTH0_DOMAIN}/"
+    AUTH0_ISSUER: str = ""
     
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = [
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # Course Data Configuration
-    ROOT_DATA_DIR: str = os.getenv("ROOT_DATA_DIR", "../data")
+    ROOT_DATA_DIR: str = "../data"
     
     class Config:
         env_file = ".env"
@@ -40,6 +40,9 @@ class Settings(BaseSettings):
 # Create settings instance
 settings = Settings()
 
-# Update Redis URL if host/port are set
+# Update derived fields
+if settings.AUTH0_DOMAIN:
+    settings.AUTH0_ISSUER = f"https://{settings.AUTH0_DOMAIN}/"
+
 if settings.REDIS_HOST and settings.REDIS_PORT:
     settings.REDIS_URL = f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}" 
