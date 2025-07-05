@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from app.core.config import settings
-from app.routers import users, health, projects
+from app.routers import users, health, projects, course_generation
 
 # Configure logging
 logging.basicConfig(
@@ -18,8 +18,10 @@ logging.basicConfig(
 # Set specific loggers to INFO level for important operations
 logging.getLogger("app.services.user_service").setLevel(logging.INFO)
 logging.getLogger("app.services.course_service").setLevel(logging.INFO)
+logging.getLogger("app.services.course_generation_service").setLevel(logging.INFO)
 logging.getLogger("app.routers.users").setLevel(logging.WARNING)
 logging.getLogger("app.routers.projects").setLevel(logging.WARNING)
+logging.getLogger("app.routers.course_generation").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(users.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
+app.include_router(course_generation.router, prefix="/api")
 
 @app.get("/")
 async def root():

@@ -1,22 +1,24 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
 class CourseStatus(str, Enum):
     DRAFT = "draft"
     GENERATING = "generating"
+    ACTIVE = "active"
     COMPLETED = "completed"
+    ARCHIVED = "archived"
     FAILED = "failed"
 
 class CourseCreate(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200, description="Course title")
-    description: Optional[str] = Field(None, max_length=1000, description="Course description")
+    title: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
 
 class CourseUpdate(BaseModel):
-    title: Optional[str] = Field(None, min_length=1, max_length=200, description="Course title")
-    description: Optional[str] = Field(None, max_length=1000, description="Course description")
-    status: Optional[CourseStatus] = Field(None, description="Course status")
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
+    status: Optional[CourseStatus] = None
 
 class CourseInDB(BaseModel):
     course_id: str
