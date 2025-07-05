@@ -13,6 +13,15 @@ Comprehensive guide covering:
 - Security best practices
 - Troubleshooting guide
 
+### [Course Management](./course-management.md)
+Complete guide for course/project management:
+- Course CRUD operations
+- File system structure and organization
+- API endpoints and data models
+- Frontend components and modals
+- Security and authorization
+- Testing and troubleshooting
+
 ## 🏗️ Architecture Overview
 
 The Naptha Course Creator is built as a monorepo with:
