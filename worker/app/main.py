@@ -1,8 +1,21 @@
-from celery import Celery
 import os
+import logging
+from celery import Celery
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logger = logging.getLogger(__name__)
+
+# Import tasks to register them with Celery
+from app.tasks import app as celery_app
 
 # Get Redis URL from environment
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -28,5 +41,5 @@ def hello():
     return "Hello from Naptha Course Creator Worker!"
 
 if __name__ == "__main__":
-    print("Welcome to Naptha Course Creator Worker")
-    app.start() 
+    logger.info("Starting Celery worker...")
+    celery_app.start() 
