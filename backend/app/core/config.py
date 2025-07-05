@@ -9,22 +9,29 @@ class Settings(BaseSettings):
     DESCRIPTION: str = "AI-powered course creation platform"
     
     # Redis configuration
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
     REDIS_URL: str = f"redis://{REDIS_HOST}:{REDIS_PORT}"
     
     # Auth0 configuration
-    AUTH0_DOMAIN: str = ""
-    AUTH0_CLIENT_ID: str = ""
-    AUTH0_API_AUDIENCE: str = ""
+    AUTH0_DOMAIN: str = os.getenv("AUTH0_DOMAIN", "")
+    AUTH0_CLIENT_ID: str = os.getenv("AUTH0_CLIENT_ID", "")
+    AUTH0_API_AUDIENCE: str = os.getenv("AUTH0_API_AUDIENCE", "")
     AUTH0_ALGORITHMS: List[str] = ["RS256"]
-    AUTH0_ISSUER: str = ""
+    AUTH0_ISSUER: str = f"https://{AUTH0_DOMAIN}/"
     
     # CORS
-    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    BACKEND_CORS_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+    ]
     
     # API
     API_V1_STR: str = "/api/v1"
+    
+    # Course Data Configuration
+    ROOT_DATA_DIR: str = os.getenv("ROOT_DATA_DIR", "../data")
     
     class Config:
         env_file = ".env"

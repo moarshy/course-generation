@@ -138,6 +138,7 @@ user_email:{email} -> auth0_id
 Comprehensive documentation is available in the `docs/` folder:
 
 - **[Authentication Flow](./docs/authentication-flow.md)**: Detailed guide covering Auth0 integration, signup/signin flows, backend processing, API endpoints, and troubleshooting
+- **[Course Management](./docs/course-management.md)**: Complete guide for course/project management with CRUD operations, file system structure, and frontend components
 - **[Documentation Index](./docs/README.md)**: Overview of all available documentation
 
 ## Next Steps
