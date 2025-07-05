@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import CourseCard from '../components/CourseCard';
 import CreateCourseModal from '../components/CreateCourseModal';
@@ -7,6 +8,7 @@ import EditCourseModal from '../components/EditCourseModal';
 
 const Dashboard = () => {
   const { getAccessTokenSilently, user } = useAuth0();
+  const navigate = useNavigate();
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -110,9 +112,13 @@ const Dashboard = () => {
     setIsEditModalOpen(true);
   };
 
+  const handleGenerateCourse = (course) => {
+    navigate(`/course/${course.course_id}/create`);
+  };
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="bg-gray-50 flex items-center justify-center min-h-96">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
           <p className="text-gray-600">Loading courses...</p>
@@ -123,7 +129,7 @@ const Dashboard = () => {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="bg-gray-50 flex items-center justify-center min-h-96">
         <div className="text-center">
           <div className="text-red-500 mb-4">
             <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -143,7 +149,7 @@ const Dashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
           <div className="flex justify-between items-center">
@@ -190,6 +196,7 @@ const Dashboard = () => {
                 onView={handleViewCourse}
                 onEdit={handleEditCourse}
                 onDelete={handleDeleteCourse}
+                onGenerate={handleGenerateCourse}
               />
             ))}
           </div>
@@ -207,6 +214,8 @@ const Dashboard = () => {
           onUpdate={handleUpdateCourse}
           course={selectedCourse}
         />
+
+
       </div>
     </div>
   );

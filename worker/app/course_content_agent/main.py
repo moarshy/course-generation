@@ -4,7 +4,7 @@ import sys
 import multiprocessing as mp
 from pathlib import Path
 from datetime import datetime
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dotenv import load_dotenv
 import dspy
 from typing import Optional, List
@@ -54,7 +54,7 @@ dspy.configure(lm=dspy.LM("gemini/gemini-2.5-flash", cache=False, max_tokens=200
 # =============================================================================
 
 class CourseBuilder:
-    """Build courses from documentation repositories with multiprocessing"""
+    """Build courses from documentation repositories with threading"""
     
     def __init__(self, cache_dir: str = CACHE_DIR, max_workers: int = None):
         self.repo_manager = RepoManager(cache_dir)
@@ -64,17 +64,17 @@ class CourseBuilder:
         
         # Set max workers (default to CPU count - 1)
         self.max_workers = max_workers or max(1, mp.cpu_count() - 1)
-        logger.info(f"Using {self.max_workers} worker processes")
+        logger.info(f"Using {self.max_workers} worker threads")
     
     def _process_documents_parallel(self, md_files, repo_path):
-        """Process documents in parallel using multiprocessing"""
+        """Process documents in parallel using threading"""
         logger.info(f"Starting parallel processing of {len(md_files)} files...")
         
-        # Prepare arguments for multiprocessing
+        # Prepare arguments for threading (avoid multiprocessing in Celery workers)
         args = [(file_path, repo_path, True) for file_path in md_files]
         
-        # Process with multiprocessing
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+        # Process with threading (safer for Celery daemon processes)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             results = list(executor.map(process_single_document, args))
         
         # Log results
@@ -94,11 +94,11 @@ class CourseBuilder:
         """Process documents to extract basic content without LLM analysis"""
         logger.info(f"Processing raw content from {len(md_files)} files...")
         
-        # Prepare arguments for multiprocessing
+        # Prepare arguments for threading (avoid multiprocessing in Celery workers)
         args = [(file_path, tree.root_path, False) for file_path in md_files]
         
-        # Process with multiprocessing
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+        # Process with threading (safer for Celery daemon processes)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             results = list(executor.map(process_single_document, args))
         
         # Log results
@@ -127,11 +127,11 @@ class CourseBuilder:
         if overview_context:
             logger.info("Using overview context for better document understanding")
         
-        # Prepare arguments for multiprocessing
+        # Prepare arguments for threading (avoid multiprocessing in Celery workers)
         llm_args = [(result, tree.root_path, overview_context) for result in successful_results]
         
-        # Process with multiprocessing
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+        # Process with threading (safer for Celery daemon processes)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             llm_results = list(executor.map(process_llm_analysis, llm_args))
         
         # Process results and create nodes
