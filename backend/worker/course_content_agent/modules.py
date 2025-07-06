@@ -12,12 +12,12 @@ import frontmatter
 import logging
 
 
-from course_content_agent.models import (
+from shared.models import (
     DocumentType, ComplexityLevel, DocumentMetadata, DocumentNode,
     DocumentTree, AssessmentPoint, LearningModule, GroupedLearningPath,
     ModuleContent, GeneratedCourse
 )
-from course_content_agent.signatures import (
+from worker.course_content_agent.signatures import (
     DocumentClassifier, DocumentClusterer,
     WelcomeMessageGenerator, ModuleIntroGenerator, ModuleMainContentGenerator, 
     ModuleConclusionGenerator, ModuleSummaryGenerator, AssessmentContentGenerator, 
@@ -672,9 +672,9 @@ class CourseGenerator(dspy.Module):
         
         logger.info(f"Generating course content for {pathway.title}")
         
-        # Generate content for each module in parallel
-        logger.info(f"Generating {len(pathway.modules)} modules in parallel...")
-        parallel_module_contents = self._generate_modules_parallel(pathway, tree, overview_context)
+        # Generate content for each module sequentially
+        logger.info(f"Generating {len(pathway.modules)} modules sequentially...")
+        module_contents = self._generate_modules_parallel(pathway, tree, overview_context)
                 
         # Generate course conclusion
         course_conclusion = self._generate_course_conclusion(pathway)
@@ -685,30 +685,42 @@ class CourseGenerator(dspy.Module):
             title=pathway.title,
             description=pathway.description,
             welcome_message=pathway.welcome_message,
-            modules=parallel_module_contents,
+            modules=module_contents,
             course_conclusion=course_conclusion
         )
         
-        logger.info(f"Generated complete course with {len(parallel_module_contents)} modules (including intro)")
+        logger.info(f"Generated complete course with {len(module_contents)} modules")
         return course
     
     def _generate_modules_parallel(self, pathway: GroupedLearningPath, tree: DocumentTree, overview_context: str) -> List[ModuleContent]:
-        """Generate modules in parallel using threading (DSPy modules are not picklable for multiprocessing)"""
+        """Generate modules sequentially to avoid DSPy threading issues"""
         
-        from concurrent.futures import ThreadPoolExecutor
+        logger.info(f"Generating {len(pathway.modules)} modules sequentially to avoid DSPy threading issues...")
         
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Create a list of futures for each module
-            futures = []
-            for i, module in enumerate(pathway.modules):
-                future = executor.submit(self._generate_module_content, module, pathway, tree, overview_context, i)
-                futures.append(future)
-            
-            # Collect results
-            module_contents = []
-            for future in futures:
-                module_contents.append(future.result())
+        module_contents = []
+        for i, module in enumerate(pathway.modules):
+            try:
+                logger.info(f"Generating module {i+1}/{len(pathway.modules)}: {module.title}")
+                module_content = self._generate_module_content(module, pathway, tree, overview_context, i)
+                module_contents.append(module_content)
+                logger.info(f"✓ Completed module {i+1}: {module.title}")
+            except Exception as e:
+                logger.error(f"✗ Failed to generate module {i+1} ({module.title}): {e}")
+                # Create a minimal module content as fallback
+                fallback_content = ModuleContent(
+                    module_id=f"module_{i:02d}",
+                    title=module.title,
+                    description=module.description,
+                    learning_objectives=module.learning_objectives,
+                    introduction=f"# {module.title}\n\n{module.description}",
+                    main_content=f"Content generation failed for this module. Please refer to source documentation.",
+                    conclusion=f"This completes the {module.title} module.",
+                    assessment=f"Review the key concepts from {module.title}.",
+                    summary=f"Summary of {module.title} module."
+                )
+                module_contents.append(fallback_content)
 
+        logger.info(f"Completed generation of {len(module_contents)} modules")
         return module_contents    
     
     def _generate_module_content(self, module: LearningModule, pathway: GroupedLearningPath,
