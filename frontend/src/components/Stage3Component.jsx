@@ -1,9 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
 import axios from 'axios';
-import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+
+// Generate stable UUID for modules without proper IDs
+const generateStableId = (module, pathwayIndex, moduleIndex) => {
+  // Use module_id if available
+  if (module.module_id) return module.module_id;
+  if (module.id) return module.id;
+  
+  // Generate a stable ID based on module content rather than position
+  // This creates a consistent ID based on module title and content
+  const contentHash = (module.title || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  const timestamp = module.created_at || module.updated_at || Date.now();
+  return `module-${pathwayIndex}-${contentHash}-${timestamp}`;
+};
 
 const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
   const { getAccessTokenSilently } = useAuth0();
@@ -31,7 +44,7 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
     }
   }, [isCompleted]);
 
-  const loadLearningPathways = async () => {
+  const loadLearningPathways = useCallback(async () => {
     try {
       const token = await getAccessTokenSilently();
       const response = await axios.get(`${API_BASE_URL}/course-generation/${courseId}/stage3`, {
@@ -44,7 +57,7 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
     } catch (error) {
       console.error('Error loading learning pathways:', error);
     }
-  };
+  }, [courseId, getAccessTokenSilently]);
 
   const loadAvailableDocuments = async () => {
     try {
@@ -63,11 +76,11 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
     }
   };
 
-  const refreshLearningPathways = async () => {
+  const refreshLearningPathways = useCallback(async () => {
     setRefreshing(true);
     await loadLearningPathways();
     setRefreshing(false);
-  };
+  }, [loadLearningPathways]);
 
   const updatePathway = async (pathwayIndex, updates) => {
     try {
@@ -164,15 +177,29 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
     }
   };
 
-  const reorderModules = async (pathwayIndex, sourceIndex, destinationIndex) => {
+  const reorderModules = useCallback(async (pathwayIndex, sourceIndex, destinationIndex) => {
     try {
       setSaving(true);
       
-      // Create the new order array - this represents the sequence of original indices
-      const originalLength = learningPathways[pathwayIndex].modules.length;
-      const newOrder = Array.from({length: originalLength}, (_, i) => i);
+      // Optimistically update the local state first
+      const updatedPathways = [...learningPathways];
+      const pathway = updatedPathways[pathwayIndex];
+      const newModules = [...pathway.modules];
       
-      // Move the source index to the destination position
+      // Perform the reorder
+      const [movedModule] = newModules.splice(sourceIndex, 1);
+      newModules.splice(destinationIndex, 0, movedModule);
+      
+      // Update local state immediately for smooth UX
+      updatedPathways[pathwayIndex] = {
+        ...pathway,
+        modules: newModules
+      };
+      setLearningPathways(updatedPathways);
+      
+      // Create the new order array for the API
+      const originalLength = pathway.modules.length;
+      const newOrder = Array.from({length: originalLength}, (_, i) => i);
       const [movedIndex] = newOrder.splice(sourceIndex, 1);
       newOrder.splice(destinationIndex, 0, movedIndex);
       
@@ -190,29 +217,54 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
         headers: { Authorization: `Bearer ${token}` }
       });
       
-      // Refresh pathways after reordering
-      await refreshLearningPathways();
+      // Only refresh from server if needed (commenting out to prevent unnecessary re-renders)
+      // await refreshLearningPathways();
       
     } catch (error) {
       console.error('Error reordering modules:', error);
       alert('Failed to reorder modules. Please try again.');
-      // Reload to revert changes
+      // Reload to revert changes only on error
       await refreshLearningPathways();
     } finally {
       setSaving(false);
     }
-  };
+  }, [learningPathways, courseId, getAccessTokenSilently, refreshLearningPathways, setSaving]);
 
-  const handleDragEnd = (result) => {
-    if (!result.destination) return;
+  const handleDragEnd = useCallback((result) => {
+    // Add validation
+    if (!result.destination) {
+      console.log('Drag cancelled - no destination');
+      return;
+    }
+    
+    if (!learningPathways || !learningPathways[selectedPathway] || !learningPathways[selectedPathway].modules) {
+      console.error('No current pathway or modules available');
+      return;
+    }
     
     const sourceIndex = result.source.index;
     const destinationIndex = result.destination.index;
     
-    if (sourceIndex === destinationIndex) return;
+    if (sourceIndex === destinationIndex) {
+      console.log('Drag cancelled - same position');
+      return;
+    }
+    
+    const currentModules = learningPathways[selectedPathway].modules;
+    
+    // Validate indices
+    if (sourceIndex < 0 || sourceIndex >= currentModules.length ||
+        destinationIndex < 0 || destinationIndex >= currentModules.length) {
+      console.error('Invalid drag indices:', { 
+        sourceIndex, 
+        destinationIndex, 
+        moduleCount: currentModules.length 
+      });
+      return;
+    }
     
     reorderModules(selectedPathway, sourceIndex, destinationIndex);
-  };
+  }, [selectedPathway, reorderModules, learningPathways]);
 
   if (isLoading) {
     return (
@@ -322,7 +374,7 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
 
       {/* Current Pathway Details */}
       {currentPathway && (
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div key={`pathway-${selectedPathway}`} className="bg-white border border-gray-200 rounded-lg p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900">{currentPathway.title}</h3>
             <button
@@ -343,9 +395,9 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
                 {(provided) => (
                   <div {...provided.droppableProps} ref={provided.innerRef}>
                     {currentPathway.modules.map((module, moduleIndex) => {
-                      // Use module_id if available, otherwise use a combination of title and index for stability
-                      const moduleKey = module.module_id || `${module.title}-${moduleIndex}`;
-                      const draggableId = `pathway-${selectedPathway}-module-${moduleKey}`;
+                      // Generate a truly stable ID that never depends on position
+                      const stableId = generateStableId(module, selectedPathway, moduleIndex);
+                      const draggableId = `module-${stableId}`;
                       return (
                         <Draggable 
                           key={draggableId} 
