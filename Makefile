@@ -7,28 +7,23 @@ help: ## Show this help message
 
 setup-env: ## Setup environment files
 	@echo "Setting up environment files..."
-	@cp backend/.env.example backend/.env 2>/dev/null || echo "backend/.env already exists"
-	@cp worker/.env.example worker/.env 2>/dev/null || echo "worker/.env already exists"
+	@cp .env.example .env 2>/dev/null || echo ".env already exists"
 	@cp frontend/.env.example frontend/.env 2>/dev/null || echo "frontend/.env already exists"
 	@echo "Environment files created. Please update them with your actual values."
 
 dev-up: ## Start development environment
 	@echo "Starting Naptha Course Creator development environment..."
-	@echo "1. Starting Redis..."
-	docker-compose up -d redis
-	@echo "2. Redis started successfully!"
+	@echo "1. Starting services with Docker Compose..."
+	docker-compose up -d
+	@echo "2. Services started successfully!"
 	@echo ""
-	@echo "Make sure to run 'make setup-env' first to set up your environment variables."
+	@echo "Services running:"
+	@echo "  Redis:    localhost:6379"
+	@echo "  Backend:  localhost:8000"
+	@echo "  Worker:   Running in background"
 	@echo ""
-	@echo "Now you can start the services manually:"
-	@echo "  Backend:  cd backend && uvicorn app.main:app --reload --port 8000"
-	@echo "  Worker:   cd worker && celery -A app.main worker --loglevel=info"
-	@echo "  Frontend: cd frontend && npm run dev"
-	@echo ""
-	@echo "Or use the individual commands:"
-	@echo "  make run-backend"
-	@echo "  make run-worker"
-	@echo "  make run-frontend"
+	@echo "To start frontend: cd frontend && npm run dev"
+	@echo "To view logs: docker-compose logs -f"
 
 dev-down: ## Stop development environment
 	@echo "Stopping development environment..."
@@ -36,26 +31,35 @@ dev-down: ## Stop development environment
 
 install-backend: ## Install backend dependencies
 	@echo "Installing backend dependencies..."
-	cd backend && pip install -r requirements.txt
-
-install-worker: ## Install worker dependencies
-	@echo "Installing worker dependencies..."
-	cd worker && pip install -r requirements.txt
+	pip install -e backend/
 
 install-frontend: ## Install frontend dependencies
 	@echo "Installing frontend dependencies..."
 	cd frontend && npm install
 
-install: install-backend install-worker install-frontend ## Install all dependencies
+install: install-backend install-frontend ## Install all dependencies
 
 run-backend: ## Run backend server
 	@echo "Starting backend server..."
-	cd backend && uvicorn app.main:app --reload --port 8000
+	cd backend && uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 run-worker: ## Run celery worker
 	@echo "Starting celery worker..."
-	cd worker && celery -A app.main worker --loglevel=info
+	cd backend && celery -A worker.tasks worker --loglevel=info
 
 run-frontend: ## Run frontend server
 	@echo "Starting frontend server..."
-	cd frontend && npm run dev 
+	cd frontend && npm run dev
+
+logs: ## View Docker Compose logs
+	@echo "Viewing service logs..."
+	docker-compose logs -f
+
+build: ## Build Docker images
+	@echo "Building Docker images..."
+	docker-compose build
+
+clean: ## Clean up Docker resources
+	@echo "Cleaning up Docker resources..."
+	docker-compose down -v --remove-orphans
+	docker system prune -f 

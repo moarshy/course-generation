@@ -1,12 +1,25 @@
 FROM python:3.11-slim
 
+# Set working directory
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+# Copy backend package files
+COPY backend/ ./backend/
 
-EXPOSE 8000
+# Install Python dependencies
+RUN pip install --no-cache-dir -e ./backend/
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Set working directory to backend package
+WORKDIR /app/backend
+
+# Default command (can be overridden)
+CMD ["python", "-m", "backend.main"] 

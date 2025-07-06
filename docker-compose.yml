@@ -9,5 +9,37 @@ services:
     volumes:
       - redis_data:/data
 
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    command: ["python", "-m", "backend.main"]
+    working_dir: /app/backend
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    command: ["celery", "-A", "worker.tasks", "worker", "--loglevel=info", "--pool=solo"]
+    working_dir: /app/backend
+
 volumes:
   redis_data: 
