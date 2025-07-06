@@ -109,14 +109,14 @@ const Stage1Component = ({ course, taskStatus, stageData, onNext }) => {
       </div>
 
       {/* Overview Document Selection */}
-      {stageData.suggested_overview_docs && stageData.suggested_overview_docs.length > 0 && (
+      {stageData.all_overview_candidates && stageData.all_overview_candidates.length > 0 && (
         <div className="bg-gray-50 rounded-lg p-4">
           <h4 className="font-medium text-gray-900 mb-3">Overview Document (Optional)</h4>
           <p className="text-sm text-gray-600 mb-4">
             Select an overview document to provide context for better course generation.
           </p>
           
-          <div className="space-y-2">
+          <div className="space-y-2 max-h-48 overflow-y-auto">
             <label className="flex items-center space-x-3 p-2 hover:bg-gray-100 rounded cursor-pointer">
               <input
                 type="radio"
@@ -129,19 +129,27 @@ const Stage1Component = ({ course, taskStatus, stageData, onNext }) => {
               <span className="text-sm text-gray-700">None</span>
             </label>
             
-            {stageData.suggested_overview_docs.map((doc) => (
-              <label key={doc} className="flex items-center space-x-3 p-2 hover:bg-gray-100 rounded cursor-pointer">
-                <input
-                  type="radio"
-                  name="overview_doc"
-                  value={doc}
-                  checked={selectedOverviewDoc === doc}
-                  onChange={(e) => setSelectedOverviewDoc(e.target.value)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                />
-                <span className="text-sm font-mono text-gray-700">{doc}</span>
-              </label>
-            ))}
+            {stageData.all_overview_candidates.map((doc) => {
+              const isSuggested = stageData.suggested_overview_docs?.includes(doc);
+              return (
+                <label key={doc} className="flex items-center space-x-3 p-2 hover:bg-gray-100 rounded cursor-pointer">
+                  <input
+                    type="radio"
+                    name="overview_doc"
+                    value={doc}
+                    checked={selectedOverviewDoc === doc}
+                    onChange={(e) => setSelectedOverviewDoc(e.target.value)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-mono text-gray-700 flex-1">{doc}</span>
+                  {isSuggested && (
+                    <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                      Recommended
+                    </span>
+                  )}
+                </label>
+              );
+            })}
           </div>
         </div>
       )}
@@ -163,8 +171,8 @@ const Stage1Component = ({ course, taskStatus, stageData, onNext }) => {
             <span className="ml-2 font-medium text-gray-900">{stageData.available_folders?.length || 0}</span>
           </div>
           <div>
-            <span className="text-gray-600">Overview Docs:</span>
-            <span className="ml-2 font-medium text-gray-900">{stageData.suggested_overview_docs?.length || 0}</span>
+            <span className="text-gray-600">Available Docs:</span>
+            <span className="ml-2 font-medium text-gray-900">{stageData.all_overview_candidates?.length || 0}</span>
           </div>
         </div>
       </div>

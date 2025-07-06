@@ -1,327 +1,890 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useAuth0 } from '@auth0/auth0-react';
+import axios from 'axios';
+import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
 const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
-  const [selectedPathwayIndex, setSelectedPathwayIndex] = useState(0);
+  const { getAccessTokenSilently } = useAuth0();
+  const [learningPathways, setLearningPathways] = useState([]);
+  const [availableDocuments, setAvailableDocuments] = useState([]);
+  const [selectedPathway, setSelectedPathway] = useState(0);
   const [editingPathway, setEditingPathway] = useState(null);
-  const [error, setError] = useState('');
+  const [editingModule, setEditingModule] = useState(null);
+  const [creatingModule, setCreatingModule] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Extract courseId from course object or URL params
+  const courseId = course?.id || course?.course_id || course?.project_id || window.location.pathname.split('/').pop();
 
   const isCompleted = taskStatus?.status === 'completed';
   const isLoading = taskStatus?.status === 'running';
   const isFailed = taskStatus?.status === 'failed';
 
-  const pathways = stageData?.pathways || [];
-
-  const handleNext = () => {
-    if (!isCompleted) {
-      setError('Please wait for pathway generation to complete');
-      return;
+  // Load learning pathways and available documents when component mounts or when stage completes
+  useEffect(() => {
+    if (isCompleted) {
+      loadLearningPathways();
+      loadAvailableDocuments();
     }
+  }, [isCompleted]);
 
-    if (selectedPathwayIndex < 0 || selectedPathwayIndex >= pathways.length) {
-      setError('Please select a valid pathway');
-      return;
+  const loadLearningPathways = async () => {
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await axios.get(`${API_BASE_URL}/course-generation/${courseId}/stage3`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (response.data && response.data.pathways) {
+        setLearningPathways(response.data.pathways);
+      }
+    } catch (error) {
+      console.error('Error loading learning pathways:', error);
     }
+  };
 
-    onNext({
-      selected_pathway_index: selectedPathwayIndex,
-      complexity_level: pathways[selectedPathwayIndex].complexity
+  const loadAvailableDocuments = async () => {
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await axios.get(`${API_BASE_URL}/course-generation/${courseId}/stage2`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (response.data && response.data.analyzed_documents) {
+        // Extract document paths for dropdown
+        const docPaths = response.data.analyzed_documents.map(doc => doc.path);
+        setAvailableDocuments(docPaths);
+      }
+    } catch (error) {
+      console.error('Error loading available documents:', error);
+    }
+  };
+
+  const refreshLearningPathways = async () => {
+    setRefreshing(true);
+    await loadLearningPathways();
+    setRefreshing(false);
+  };
+
+  const updatePathway = async (pathwayIndex, updates) => {
+    try {
+      setSaving(true);
+      const token = await getAccessTokenSilently();
+      
+      await axios.put(`${API_BASE_URL}/course-generation/${courseId}/stage3/pathway`, {
+        pathway_index: pathwayIndex,
+        pathway_updates: updates
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh pathways after update
+      await refreshLearningPathways();
+      setEditingPathway(null);
+      
+    } catch (error) {
+      console.error('Error updating pathway:', error);
+      alert('Failed to update pathway. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateModule = async (pathwayIndex, moduleIndex, updates) => {
+    try {
+      setSaving(true);
+      const token = await getAccessTokenSilently();
+      
+      await axios.put(`${API_BASE_URL}/course-generation/${courseId}/stage3/module`, {
+        pathway_index: pathwayIndex,
+        module_index: moduleIndex,
+        module_updates: updates
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh pathways after update
+      await refreshLearningPathways();
+      setEditingModule(null);
+      
+    } catch (error) {
+      console.error('Error updating module:', error);
+      alert('Failed to update module. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createModule = async (pathwayIndex, moduleData) => {
+    try {
+      setSaving(true);
+      const token = await getAccessTokenSilently();
+      
+      await axios.post(`${API_BASE_URL}/course-generation/${courseId}/stage3/module`, {
+        pathway_index: pathwayIndex,
+        module_data: moduleData
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh pathways after creation
+      await refreshLearningPathways();
+      setCreatingModule(false);
+      
+    } catch (error) {
+      console.error('Error creating module:', error);
+      alert('Failed to create module. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteModule = async (pathwayIndex, moduleIndex) => {
+    if (!confirm('Are you sure you want to delete this module?')) return;
+    
+    try {
+      setSaving(true);
+      const token = await getAccessTokenSilently();
+      
+      await axios.delete(`${API_BASE_URL}/course-generation/${courseId}/stage3/pathway/${pathwayIndex}/module/${moduleIndex}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh pathways after deletion
+      await refreshLearningPathways();
+      
+    } catch (error) {
+      console.error('Error deleting module:', error);
+      alert('Failed to delete module. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reorderModules = async (pathwayIndex, sourceIndex, destinationIndex) => {
+    const pathway = learningPathways[pathwayIndex];
+    const modules = Array.from(pathway.modules);
+    const [removed] = modules.splice(sourceIndex, 1);
+    modules.splice(destinationIndex, 0, removed);
+    
+    // Create new order array
+    const newOrder = modules.map((_, index) => {
+      if (index < sourceIndex) return index;
+      if (index === destinationIndex) return sourceIndex;
+      if (index > sourceIndex && index <= destinationIndex) return index - 1;
+      if (index < destinationIndex && index >= sourceIndex) return index + 1;
+      return index;
     });
+    
+    try {
+      setSaving(true);
+      const token = await getAccessTokenSilently();
+      
+      await axios.put(`${API_BASE_URL}/course-generation/${courseId}/stage3/pathway/${pathwayIndex}/modules/reorder`, {
+        module_order: newOrder
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      // Refresh pathways after reordering
+      await refreshLearningPathways();
+      
+    } catch (error) {
+      console.error('Error reordering modules:', error);
+      alert('Failed to reorder modules. Please try again.');
+      // Reload to revert changes
+      await refreshLearningPathways();
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleEditPathway = (pathway) => {
-    setEditingPathway({ ...pathway });
+  const handleDragEnd = (result) => {
+    if (!result.destination) return;
+    
+    const sourceIndex = result.source.index;
+    const destinationIndex = result.destination.index;
+    
+    if (sourceIndex === destinationIndex) return;
+    
+    reorderModules(selectedPathway, sourceIndex, destinationIndex);
   };
-
-  const handleSavePathway = () => {
-    // In a real implementation, you would save the modified pathway
-    // For now, we'll just close the edit modal
-    setEditingPathway(null);
-  };
-
-  if (isFailed) {
-    return (
-      <div className="text-center py-8">
-        <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        </div>
-        <h3 className="text-lg font-medium text-gray-900 mb-2">Pathway Generation Failed</h3>
-        <p className="text-gray-600">
-          {taskStatus?.error_message || 'An error occurred during pathway generation'}
-        </p>
-      </div>
-    );
-  }
 
   if (isLoading) {
     return (
-      <div className="text-center py-8">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-        <h3 className="text-lg font-medium text-gray-900 mb-2">Generating Learning Pathways</h3>
-        <p className="text-gray-600 mb-4">
-          Creating structured learning paths based on your documents...
-        </p>
-        
-        <div className="max-w-md mx-auto">
-          <div className="flex justify-between text-sm text-gray-600 mb-2">
-            <span>Progress</span>
-            <span>{taskStatus?.progress_percentage || 0}%</span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${taskStatus?.progress_percentage || 0}%` }}
-            />
-          </div>
-        </div>
-
-        <div className="mt-6 text-left max-w-md mx-auto">
-          <h4 className="font-medium text-gray-900 mb-3">What's happening:</h4>
-          <ul className="space-y-2 text-sm text-gray-600">
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Analyzing document relationships</span>
-            </li>
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Grouping related content into modules</span>
-            </li>
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Creating learning objectives</span>
-            </li>
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Generating pathway variations</span>
-            </li>
-          </ul>
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Generating learning pathways...</p>
         </div>
       </div>
     );
   }
 
-  if (isCompleted && pathways.length > 0) {
+  if (isFailed) {
     return (
-      <div className="space-y-6">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <h3 className="text-xl font-semibold text-gray-900 mb-2">Learning Pathways Generated</h3>
-          <p className="text-gray-600">
-            {pathways.length} learning pathway{pathways.length > 1 ? 's' : ''} created based on your documentation
-          </p>
-        </div>
+      <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-red-800 mb-2">Pathway Generation Failed</h3>
+        <p className="text-red-700 mb-4">
+          There was an error generating the learning pathways. Please try again.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
 
-        <div className="bg-blue-50 rounded-lg p-4">
-          <h4 className="font-medium text-gray-900 mb-2">Select a Learning Pathway</h4>
-          <p className="text-sm text-gray-600">
-            Choose the pathway that best fits your learning goals. You can modify the selected pathway before generating the final course.
-          </p>
-        </div>
+  if (!isCompleted) {
+    return (
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-blue-800 mb-2">Generating Learning Pathways</h3>
+        <p className="text-blue-700">
+          Please wait while we generate personalized learning pathways based on your documents...
+        </p>
+      </div>
+    );
+  }
 
-        <div className="space-y-4">
-          {pathways.map((pathway, index) => (
+  if (learningPathways.length === 0) {
+    return (
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-yellow-800 mb-2">No Learning Pathways Found</h3>
+        <p className="text-yellow-700 mb-4">
+          No learning pathways were generated. This might be due to insufficient document analysis.
+        </p>
+        <button
+          onClick={refreshLearningPathways}
+          className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700"
+          disabled={refreshing}
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+    );
+  }
+
+  const currentPathway = learningPathways[selectedPathway];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-semibold text-gray-900">Learning Pathways</h2>
+        <button
+          onClick={refreshLearningPathways}
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+          disabled={refreshing}
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+
+      {/* Pathway Selection */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <h3 className="text-lg font-semibold mb-4">Select a Pathway</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {learningPathways.map((pathway, index) => (
             <div
               key={index}
-              className={`border-2 rounded-lg p-4 cursor-pointer transition-all duration-200 ${
-                selectedPathwayIndex === index 
-                  ? 'border-blue-500 bg-blue-50' 
+              className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                selectedPathway === index
+                  ? 'border-blue-500 bg-blue-50'
                   : 'border-gray-200 hover:border-gray-300'
               }`}
-              onClick={() => setSelectedPathwayIndex(index)}
+              onClick={() => setSelectedPathway(index)}
             >
-              <div className="flex justify-between items-start mb-3">
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="radio"
-                    name="pathway"
-                    checked={selectedPathwayIndex === index}
-                    onChange={() => setSelectedPathwayIndex(index)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 focus:ring-blue-500"
-                  />
-                  <div>
-                    <h4 className="font-medium text-gray-900">{pathway.title}</h4>
-                    <div className="flex items-center space-x-4 text-sm text-gray-600">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        pathway.complexity === 'beginner' ? 'bg-green-100 text-green-800' :
-                        pathway.complexity === 'intermediate' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {pathway.complexity}
-                      </span>
-                      <span>{pathway.module_count} modules</span>
-                    </div>
-                  </div>
-                </div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-gray-900">{pathway.title}</h4>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleEditPathway(pathway);
+                    setEditingPathway(index);
                   }}
-                  className="text-blue-600 hover:text-blue-800 transition-colors duration-200"
+                  className="text-blue-600 hover:text-blue-800"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                  </svg>
+                  Edit
                 </button>
               </div>
-
-              <p className="text-sm text-gray-600 mb-3">{pathway.description}</p>
-
-              <div className="space-y-2">
-                <h5 className="font-medium text-gray-900 text-sm">Modules:</h5>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {pathway.modules.map((module, moduleIndex) => (
-                    <div key={moduleIndex} className="bg-white rounded p-2 text-sm">
-                      <div className="font-medium text-gray-900">{module.title}</div>
-                      <div className="text-gray-600">{module.theme}</div>
-                    </div>
-                  ))}
-                </div>
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>Complexity: {pathway.complexity}</span>
               </div>
             </div>
           ))}
         </div>
+      </div>
 
-        {/* Error Display */}
-        {error && (
-          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-800">{error}</p>
+      {/* Current Pathway Details */}
+      {currentPathway && (
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900">{currentPathway.title}</h3>
+            <button
+              onClick={() => setCreatingModule(true)}
+              className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+            >
+              Add Module
+            </button>
           </div>
-        )}
-
-        <div className="flex justify-end space-x-3">
-          <button
-            onClick={handleNext}
-            disabled={!isCompleted || selectedPathwayIndex < 0}
-            className="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600 transition-colors duration-200 disabled:bg-gray-300 disabled:cursor-not-allowed"
-          >
-            Next: Generate Course
-          </button>
+          
+          <p className="text-gray-700 mb-4">{currentPathway.description}</p>
+          
+          <div className="mb-6">
+            <h4 className="font-semibold mb-2">Modules ({currentPathway.modules.length})</h4>
+            
+            <DragDropContext onDragEnd={handleDragEnd}>
+              <Droppable droppableId="modules">
+                {(provided) => (
+                  <div {...provided.droppableProps} ref={provided.innerRef}>
+                    {currentPathway.modules.map((module, moduleIndex) => {
+                      const draggableId = module.module_id || `module-${moduleIndex}`;
+                      return (
+                        <Draggable 
+                          key={draggableId} 
+                          draggableId={draggableId} 
+                          index={moduleIndex}
+                        >
+                          {(provided, snapshot) => (
+                            <div
+                              ref={provided.innerRef}
+                              {...provided.draggableProps}
+                              {...provided.dragHandleProps}
+                              className={`bg-gray-50 border rounded-lg p-4 mb-3 ${
+                                snapshot.isDragging ? 'shadow-lg' : ''
+                              }`}
+                            >
+                            <div className="flex items-center justify-between mb-2">
+                              <h5 className="font-semibold text-gray-900">{module.title}</h5>
+                              <div className="flex space-x-2">
+                                <button
+                                  onClick={() => setEditingModule({ pathwayIndex: selectedPathway, moduleIndex, module })}
+                                  className="text-blue-600 hover:text-blue-800"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={() => deleteModule(selectedPathway, moduleIndex)}
+                                  className="text-red-600 hover:text-red-800"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                            
+                            <p className="text-sm text-gray-600 mb-2">{module.description}</p>
+                            
+                            <div className="text-xs text-gray-500 mb-2">
+                              <span className="inline-block bg-gray-200 px-2 py-1 rounded mr-2">
+                                {module.theme}
+                              </span>
+                              <span className="inline-block bg-gray-200 px-2 py-1 rounded">
+                                {module.target_complexity}
+                              </span>
+                            </div>
+                            
+                            {module.learning_objectives && module.learning_objectives.length > 0 && (
+                              <div className="mb-2">
+                                <strong className="text-xs text-gray-700">Learning Objectives:</strong>
+                                <ul className="text-xs text-gray-600 ml-4">
+                                  {module.learning_objectives.map((objective, i) => (
+                                    <li key={i} className="list-disc">{objective}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            
+                            {module.linked_documents && module.linked_documents.length > 0 && (
+                              <div>
+                                <strong className="text-xs text-gray-700">Linked Documents:</strong>
+                                <div className="text-xs text-gray-600">
+                                  {module.linked_documents.join(', ')}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </Draggable>
+                    );
+                    })}
+                    {provided.placeholder}
+                  </div>
+                )}
+              </Droppable>
+            </DragDropContext>
+          </div>
+          
+          <div className="flex justify-between">
+            <button
+              onClick={() => onNext({ selected_path_index: selectedPathway })}
+              className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+            >
+              Continue with Selected Pathway
+            </button>
+          </div>
         </div>
+      )}
 
-        {/* Edit Pathway Modal */}
-        {editingPathway && (
-          <PathwayEditModal
-            pathway={editingPathway}
-            onSave={handleSavePathway}
-            onCancel={() => setEditingPathway(null)}
-          />
-        )}
-      </div>
-    );
-  }
+      {/* Pathway Edit Modal */}
+      {editingPathway !== null && (
+        <PathwayEditModal
+          pathway={learningPathways[editingPathway]}
+          onSave={(updates) => updatePathway(editingPathway, updates)}
+          onCancel={() => setEditingPathway(null)}
+          saving={saving}
+        />
+      )}
 
-  return (
-    <div className="text-center py-8">
-      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-        <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      </div>
-      <h3 className="text-lg font-medium text-gray-900 mb-2">No Learning Pathways Found</h3>
-      <p className="text-gray-600">Unable to generate learning pathways. Please try again.</p>
+      {/* Module Edit Modal */}
+      {editingModule && (
+        <ModuleEditModal
+          module={editingModule.module}
+          onSave={(updates) => updateModule(editingModule.pathwayIndex, editingModule.moduleIndex, updates)}
+          onCancel={() => setEditingModule(null)}
+          saving={saving}
+          availableDocuments={availableDocuments}
+        />
+      )}
+
+      {/* Module Create Modal */}
+      {creatingModule && (
+        <ModuleCreateModal
+          onSave={(moduleData) => createModule(selectedPathway, moduleData)}
+          onCancel={() => setCreatingModule(false)}
+          saving={saving}
+          availableDocuments={availableDocuments}
+        />
+      )}
     </div>
   );
 };
 
-const PathwayEditModal = ({ pathway, onSave, onCancel }) => {
-  const [editedPathway, setEditedPathway] = useState(pathway);
+// Pathway Edit Modal Component
+const PathwayEditModal = ({ pathway, onSave, onCancel, saving }) => {
+  const [formData, setFormData] = useState({
+    title: pathway.title || '',
+    description: pathway.description || '',
+    target_complexity: pathway.target_complexity || 'INTERMEDIATE',
+    estimated_duration: pathway.estimated_duration || '',
+    prerequisites: pathway.prerequisites || []
+  });
 
-  const handleSave = () => {
-    onSave(editedPathway);
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(formData);
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-semibold text-gray-900">Edit Learning Pathway</h3>
-            <button
-              onClick={onCancel}
-              className="text-gray-400 hover:text-gray-600 transition-colors duration-200"
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <h3 className="text-lg font-semibold mb-4">Edit Pathway</h3>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <input
+              type="text"
+              value={formData.title}
+              onChange={(e) => setFormData({...formData, title: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({...formData, description: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              rows="3"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Complexity</label>
+            <select
+              value={formData.target_complexity}
+              onChange={(e) => setFormData({...formData, target_complexity: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+              <option value="BEGINNER">Beginner</option>
+              <option value="INTERMEDIATE">Intermediate</option>
+              <option value="ADVANCED">Advanced</option>
+            </select>
           </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Title
-              </label>
-              <input
-                type="text"
-                value={editedPathway.title}
-                onChange={(e) => setEditedPathway({...editedPathway, title: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Description
-              </label>
-              <textarea
-                value={editedPathway.description}
-                onChange={(e) => setEditedPathway({...editedPathway, description: e.target.value})}
-                rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Complexity Level
-              </label>
-              <select
-                value={editedPathway.complexity}
-                onChange={(e) => setEditedPathway({...editedPathway, complexity: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="beginner">Beginner</option>
-                <option value="intermediate">Intermediate</option>
-                <option value="advanced">Advanced</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Modules
-              </label>
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                {editedPathway.modules.map((module, index) => (
-                  <div key={index} className="bg-gray-50 rounded p-3">
-                    <div className="font-medium text-gray-900">{module.title}</div>
-                    <div className="text-sm text-gray-600">{module.theme}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Estimated Duration</label>
+            <input
+              type="text"
+              value={formData.estimated_duration}
+              onChange={(e) => setFormData({...formData, estimated_duration: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="e.g., 2 weeks, 40 hours"
+            />
           </div>
 
-          <div className="flex justify-end space-x-3 mt-6">
+          <div className="flex justify-end space-x-2">
             <button
+              type="button"
               onClick={onCancel}
-              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors duration-200"
+              className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
             >
               Cancel
             </button>
             <button
-              onClick={handleSave}
-              className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors duration-200"
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              Save Changes
+              {saving ? 'Saving...' : 'Save'}
             </button>
           </div>
-        </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Module Edit Modal Component
+const ModuleEditModal = ({ module, onSave, onCancel, saving, availableDocuments = [] }) => {
+  const [formData, setFormData] = useState({
+    title: module.title || '',
+    description: module.description || '',
+    theme: module.theme || '',
+    target_complexity: module.target_complexity || 'INTERMEDIATE',
+    learning_objectives: module.learning_objectives || [],
+    linked_documents: module.linked_documents || []
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(formData);
+  };
+
+  const handleObjectiveChange = (index, value) => {
+    const newObjectives = [...formData.learning_objectives];
+    newObjectives[index] = value;
+    setFormData({...formData, learning_objectives: newObjectives});
+  };
+
+  const addObjective = () => {
+    setFormData({...formData, learning_objectives: [...formData.learning_objectives, '']});
+  };
+
+  const removeObjective = (index) => {
+    const newObjectives = formData.learning_objectives.filter((_, i) => i !== index);
+    setFormData({...formData, learning_objectives: newObjectives});
+  };
+
+  const handleDocumentChange = (docPath, isSelected) => {
+    const newLinkedDocs = isSelected 
+      ? [...formData.linked_documents, docPath]
+      : formData.linked_documents.filter(doc => doc !== docPath);
+    setFormData({...formData, linked_documents: newLinkedDocs});
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <h3 className="text-lg font-semibold mb-4">Edit Module</h3>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <input
+              type="text"
+              value={formData.title}
+              onChange={(e) => setFormData({...formData, title: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({...formData, description: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              rows="3"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Theme</label>
+            <input
+              type="text"
+              value={formData.theme}
+              onChange={(e) => setFormData({...formData, theme: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Complexity</label>
+            <select
+              value={formData.target_complexity}
+              onChange={(e) => setFormData({...formData, target_complexity: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="BEGINNER">Beginner</option>
+              <option value="INTERMEDIATE">Intermediate</option>
+              <option value="ADVANCED">Advanced</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Learning Objectives</label>
+            {formData.learning_objectives.map((objective, index) => (
+              <div key={index} className="flex items-center space-x-2 mb-2">
+                <input
+                  type="text"
+                  value={objective}
+                  onChange={(e) => handleObjectiveChange(index, e.target.value)}
+                  className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter learning objective"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeObjective(index)}
+                  className="text-red-600 hover:text-red-800"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addObjective}
+              className="text-blue-600 hover:text-blue-800"
+            >
+              Add Objective
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Linked Documents</label>
+            <div className="max-h-40 overflow-y-auto border border-gray-300 rounded p-2">
+              {availableDocuments.length > 0 ? (
+                availableDocuments.map((docPath, index) => (
+                  <div key={index} className="flex items-center space-x-2 mb-1">
+                    <input
+                      type="checkbox"
+                      id={`doc-${index}`}
+                      checked={formData.linked_documents.includes(docPath)}
+                      onChange={(e) => handleDocumentChange(docPath, e.target.checked)}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <label htmlFor={`doc-${index}`} className="text-sm text-gray-700 cursor-pointer flex-1">
+                      {docPath}
+                    </label>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-gray-500">No documents available. Make sure Stage 2 is completed.</p>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Selected: {formData.linked_documents.length} document{formData.linked_documents.length !== 1 ? 's' : ''}
+            </p>
+          </div>
+
+          <div className="flex justify-end space-x-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// Module Create Modal Component
+const ModuleCreateModal = ({ onSave, onCancel, saving, availableDocuments = [] }) => {
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    theme: 'General',
+    target_complexity: 'INTERMEDIATE',
+    learning_objectives: [''],
+    linked_documents: []
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    // Filter out empty objectives
+    const filteredObjectives = formData.learning_objectives.filter(obj => obj.trim() !== '');
+    onSave({...formData, learning_objectives: filteredObjectives});
+  };
+
+  const handleObjectiveChange = (index, value) => {
+    const newObjectives = [...formData.learning_objectives];
+    newObjectives[index] = value;
+    setFormData({...formData, learning_objectives: newObjectives});
+  };
+
+  const addObjective = () => {
+    setFormData({...formData, learning_objectives: [...formData.learning_objectives, '']});
+  };
+
+  const removeObjective = (index) => {
+    const newObjectives = formData.learning_objectives.filter((_, i) => i !== index);
+    setFormData({...formData, learning_objectives: newObjectives});
+  };
+
+  const handleDocumentChange = (docPath, isSelected) => {
+    const newLinkedDocs = isSelected 
+      ? [...formData.linked_documents, docPath]
+      : formData.linked_documents.filter(doc => doc !== docPath);
+    setFormData({...formData, linked_documents: newLinkedDocs});
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <h3 className="text-lg font-semibold mb-4">Create New Module</h3>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <input
+              type="text"
+              value={formData.title}
+              onChange={(e) => setFormData({...formData, title: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({...formData, description: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              rows="3"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Theme</label>
+            <input
+              type="text"
+              value={formData.theme}
+              onChange={(e) => setFormData({...formData, theme: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Complexity</label>
+            <select
+              value={formData.target_complexity}
+              onChange={(e) => setFormData({...formData, target_complexity: e.target.value})}
+              className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="BEGINNER">Beginner</option>
+              <option value="INTERMEDIATE">Intermediate</option>
+              <option value="ADVANCED">Advanced</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Learning Objectives</label>
+            {formData.learning_objectives.map((objective, index) => (
+              <div key={index} className="flex items-center space-x-2 mb-2">
+                <input
+                  type="text"
+                  value={objective}
+                  onChange={(e) => handleObjectiveChange(index, e.target.value)}
+                  className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  placeholder="Enter learning objective"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeObjective(index)}
+                  className="text-red-600 hover:text-red-800"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addObjective}
+              className="text-blue-600 hover:text-blue-800"
+            >
+              Add Objective
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Linked Documents</label>
+            <div className="max-h-40 overflow-y-auto border border-gray-300 rounded p-2">
+              {availableDocuments.length > 0 ? (
+                availableDocuments.map((docPath, index) => (
+                  <div key={index} className="flex items-center space-x-2 mb-1">
+                    <input
+                      type="checkbox"
+                      id={`create-doc-${index}`}
+                      checked={formData.linked_documents.includes(docPath)}
+                      onChange={(e) => handleDocumentChange(docPath, e.target.checked)}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <label htmlFor={`create-doc-${index}`} className="text-sm text-gray-700 cursor-pointer flex-1">
+                      {docPath}
+                    </label>
+                  </div>
+                ))
+              ) : (
+                <p className="text-sm text-gray-500">No documents available. Make sure Stage 2 is completed.</p>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Selected: {formData.linked_documents.length} document{formData.linked_documents.length !== 1 ? 's' : ''}
+            </p>
+          </div>
+
+          <div className="flex justify-end space-x-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'Creating...' : 'Create'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
