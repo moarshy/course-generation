@@ -125,10 +125,13 @@ const CourseCreationPage = () => {
       // Process each stage status
       Object.entries(taskStatusData.stage_statuses).forEach(([stage, status]) => {
         const mappedStage = stageMap[stage];
+        console.log(`Processing stage: ${stage} -> ${mappedStage} (status: ${status})`);
         if (mappedStage) {
           if (status === 'completed') {
+            console.log(`Marking ${mappedStage} as completed`);
             newCompletedStages.add(mappedStage);
           } else if (status === 'running' || status === 'failed') {
+            console.log(`Setting ${mappedStage} as active stage`);
             activeStage = mappedStage;
           }
         }
@@ -236,18 +239,24 @@ const CourseCreationPage = () => {
         
         // Handle stage transitions and polling logic
         const currentStageStatus = response.data.status;
+        console.log('Current stage status:', currentStageStatus, 'Stage statuses:', stageStatuses);
+        
         if (currentStageStatus === 'running' || currentStageStatus === 'pending') {
-          console.log('Continuing polling...');
+          console.log('Task is running, continuing polling...');
           setTimeout(pollTaskStatus, 2000);
         } else if (currentStageStatus === 'completed') {
-          // Check if any stage is still running
+          // Check if any individual stage is still running
           const hasRunningStage = Object.values(stageStatuses).includes('running');
           if (hasRunningStage) {
-            console.log('Another stage is running, continuing polling...');
+            console.log('A stage is still running, continuing polling...');
             setTimeout(pollTaskStatus, 2000);
           } else {
-            console.log('All stages completed or waiting for user input');
-            // Stage transitions are handled by the updateStageProgress function
+            console.log('All stages completed');
+            // Check if we need to load final stage data
+            if (isStageCompleted('COURSE_GENERATION') && !stageData.generation) {
+              console.log('Stage 4 completed, loading data...');
+              await loadStage4Data();
+            }
           }
         } else if (currentStageStatus === 'failed') {
           console.log('Generation failed:', response.data.error_message);
@@ -302,6 +311,21 @@ const CourseCreationPage = () => {
       setStageData(prev => ({ ...prev, pathways: response.data }));
     } catch (error) {
       console.error('Failed to load stage 3 data:', error);
+    }
+  };
+
+  const loadStage4Data = async () => {
+    try {
+      console.log('Loading stage 4 data...');
+      const token = await getAccessTokenSilently();
+      const response = await axios.get(
+        `${API_BASE_URL}/course-generation/${courseId}/stage4`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      console.log('Stage 4 data loaded:', response.data);
+      setStageData(prev => ({ ...prev, generation: response.data }));
+    } catch (error) {
+      console.error('Failed to load stage 4 data:', error);
     }
   };
 
@@ -548,7 +572,24 @@ const CourseCreationPage = () => {
       pollTaskStatus();
       
     } catch (error) {
-      setError(error.response?.data?.detail || `Failed to proceed to next stage`);
+      console.error('Stage transition error:', error.response?.data);
+      let errorMessage = `Failed to proceed to next stage`;
+      
+      if (error.response?.data?.detail) {
+        if (typeof error.response.data.detail === 'string') {
+          errorMessage = error.response.data.detail;
+        } else if (Array.isArray(error.response.data.detail)) {
+          // Handle validation errors array
+          errorMessage = error.response.data.detail.map(err => 
+            typeof err === 'string' ? err : err.msg || JSON.stringify(err)
+          ).join(', ');
+        } else {
+          // Handle validation error object
+          errorMessage = error.response.data.detail.msg || JSON.stringify(error.response.data.detail);
+        }
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }

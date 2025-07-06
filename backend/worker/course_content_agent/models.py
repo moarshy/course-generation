@@ -92,8 +92,8 @@ class LearningModule(BaseModel):
     theme: str  # Core concept/technology focus
     description: str
     learning_objectives: List[str]
-    linked_documents: List[str]  # Changed from 'documents' to match backend
-    target_complexity: ComplexityLevel  # Added missing field
+    linked_documents: List[str]  
+    target_complexity: ComplexityLevel
     assessment: AssessmentPoint
 
 class GroupedLearningPath(BaseModel):

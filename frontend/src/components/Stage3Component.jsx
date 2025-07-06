@@ -23,6 +23,7 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
   const [learningPathways, setLearningPathways] = useState([]);
   const [availableDocuments, setAvailableDocuments] = useState([]);
   const [selectedPathway, setSelectedPathway] = useState(0);
+  const [selectedComplexity, setSelectedComplexity] = useState('intermediate');
   const [editingPathway, setEditingPathway] = useState(null);
   const [editingModule, setEditingModule] = useState(null);
   const [creatingModule, setCreatingModule] = useState(false);
@@ -473,13 +474,65 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
             </DragDropContext>
           </div>
           
-          <div className="flex justify-between">
-            <button
-              onClick={() => onNext({ selected_path_index: selectedPathway })}
-              className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
-            >
-              Continue with Selected Pathway
-            </button>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Select Target Complexity Level:
+              </label>
+              <select
+                value={selectedComplexity}
+                onChange={(e) => setSelectedComplexity(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="beginner">Beginner</option>
+                <option value="intermediate">Intermediate</option>
+                <option value="advanced">Advanced</option>
+              </select>
+            </div>
+            
+            <div className="flex justify-between">
+              <button
+                onClick={() => {
+                  // Transform pathway to match GroupedLearningPath structure
+                  let transformedPathway = null;
+                  if (selectedPathway !== null && learningPathways[selectedPathway]) {
+                    const pathway = learningPathways[selectedPathway];
+                    
+                    // Transform modules to match LearningModule structure
+                    const transformedModules = (pathway.modules || []).map((module, index) => ({
+                      module_id: module.module_id || module.id || `module-${index}`,
+                      title: module.title || '',
+                      description: module.description || '',
+                      learning_objectives: module.learning_objectives || [],
+                      linked_documents: module.linked_documents || [],
+                      theme: module.theme || 'General',
+                      target_complexity: module.target_complexity || selectedComplexity,
+                      content: module.content || null,
+                      assessment: module.assessment || null
+                    }));
+                    
+                    transformedPathway = {
+                      pathway_id: pathway.id || pathway.pathway_id || `pathway-${selectedPathway}-${Date.now()}`,
+                      title: pathway.title,
+                      description: pathway.description,
+                      target_complexity: selectedComplexity, // Use user-selected complexity
+                      modules: transformedModules,
+                      welcome_message: pathway.welcome_message || `Welcome to ${pathway.title}`
+                    };
+                  }
+                  
+                  const stage4Data = { 
+                    selected_complexity: selectedComplexity,
+                    custom_pathway: transformedPathway
+                  };
+                  console.log('Sending Stage 4 data:', stage4Data);
+                  onNext(stage4Data);
+                }}
+                className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+              >
+                Generate Course →
+              </button>
+            </div>
           </div>
         </div>
       )}

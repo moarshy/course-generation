@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Add the parent directory to the path so we can import the course_content_agent
 sys.path.append(str(Path(__file__).parent.parent))
-from course_content_agent.main import CourseBuilder
+from .main import CourseBuilder
 
 from datetime import datetime
 import hashlib

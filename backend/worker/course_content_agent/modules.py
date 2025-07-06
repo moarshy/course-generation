@@ -12,12 +12,12 @@ import frontmatter
 import logging
 
 
-from shared.models import (
+from .models import (
     DocumentType, ComplexityLevel, DocumentMetadata, DocumentNode,
     DocumentTree, AssessmentPoint, LearningModule, GroupedLearningPath,
     ModuleContent, GeneratedCourse
 )
-from worker.course_content_agent.signatures import (
+from .signatures import (
     DocumentClassifier, DocumentClusterer,
     WelcomeMessageGenerator, ModuleIntroGenerator, ModuleMainContentGenerator, 
     ModuleConclusionGenerator, ModuleSummaryGenerator, AssessmentContentGenerator, 
@@ -672,9 +672,9 @@ class CourseGenerator(dspy.Module):
         
         logger.info(f"Generating course content for {pathway.title}")
         
-        # Generate content for each module sequentially
-        logger.info(f"Generating {len(pathway.modules)} modules sequentially...")
-        module_contents = self._generate_modules_parallel(pathway, tree, overview_context)
+        # Generate content for each module in parallel
+        logger.info(f"Generating {len(pathway.modules)} modules in parallel...")
+        parallel_module_contents = self._generate_modules_parallel(pathway, tree, overview_context)
                 
         # Generate course conclusion
         course_conclusion = self._generate_course_conclusion(pathway)
@@ -685,42 +685,30 @@ class CourseGenerator(dspy.Module):
             title=pathway.title,
             description=pathway.description,
             welcome_message=pathway.welcome_message,
-            modules=module_contents,
+            modules=parallel_module_contents,
             course_conclusion=course_conclusion
         )
         
-        logger.info(f"Generated complete course with {len(module_contents)} modules")
+        logger.info(f"Generated complete course with {len(parallel_module_contents)} modules (including intro)")
         return course
     
     def _generate_modules_parallel(self, pathway: GroupedLearningPath, tree: DocumentTree, overview_context: str) -> List[ModuleContent]:
-        """Generate modules sequentially to avoid DSPy threading issues"""
+        """Generate modules in parallel using threading (DSPy modules are not picklable for multiprocessing)"""
         
-        logger.info(f"Generating {len(pathway.modules)} modules sequentially to avoid DSPy threading issues...")
+        from concurrent.futures import ThreadPoolExecutor
         
-        module_contents = []
-        for i, module in enumerate(pathway.modules):
-            try:
-                logger.info(f"Generating module {i+1}/{len(pathway.modules)}: {module.title}")
-                module_content = self._generate_module_content(module, pathway, tree, overview_context, i)
-                module_contents.append(module_content)
-                logger.info(f"✓ Completed module {i+1}: {module.title}")
-            except Exception as e:
-                logger.error(f"✗ Failed to generate module {i+1} ({module.title}): {e}")
-                # Create a minimal module content as fallback
-                fallback_content = ModuleContent(
-                    module_id=f"module_{i:02d}",
-                    title=module.title,
-                    description=module.description,
-                    learning_objectives=module.learning_objectives,
-                    introduction=f"# {module.title}\n\n{module.description}",
-                    main_content=f"Content generation failed for this module. Please refer to source documentation.",
-                    conclusion=f"This completes the {module.title} module.",
-                    assessment=f"Review the key concepts from {module.title}.",
-                    summary=f"Summary of {module.title} module."
-                )
-                module_contents.append(fallback_content)
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Create a list of futures for each module
+            futures = []
+            for i, module in enumerate(pathway.modules):
+                future = executor.submit(self._generate_module_content, module, pathway, tree, overview_context, i)
+                futures.append(future)
+            
+            # Collect results
+            module_contents = []
+            for future in futures:
+                module_contents.append(future.result())
 
-        logger.info(f"Completed generation of {len(module_contents)} modules")
         return module_contents    
     
     def _generate_module_content(self, module: LearningModule, pathway: GroupedLearningPath,
@@ -808,10 +796,18 @@ class CourseGenerator(dspy.Module):
     def _generate_module_conclusion(self, module: LearningModule, overview_context: str) -> str:
         """Generate module conclusion"""
         
+        # Handle case where assessment might be None
+        key_concepts = []
+        if module.assessment and module.assessment.concepts_to_assess:
+            key_concepts = module.assessment.concepts_to_assess
+        elif module.learning_objectives:
+            # Fall back to learning objectives if no assessment concepts
+            key_concepts = module.learning_objectives
+        
         result = self.conclusion_generator(
             module_title=module.title,
             learning_objectives=", ".join(module.learning_objectives),
-            key_concepts=", ".join(module.assessment.concepts_to_assess),
+            key_concepts=", ".join(key_concepts),
             overview_context=overview_context
         )
         return result.conclusion
@@ -819,9 +815,21 @@ class CourseGenerator(dspy.Module):
     def _generate_assessment_content(self, module: LearningModule, overview_context: str, source_documents: str) -> str:
         """Generate assessment with questions and answers"""
         
+        # Handle case where assessment might be None
+        assessment_title = f"{module.title} Assessment"
+        concepts_to_assess = []
+        
+        if module.assessment:
+            assessment_title = module.assessment.title
+            concepts_to_assess = module.assessment.concepts_to_assess or []
+        
+        # Fall back to learning objectives if no assessment concepts
+        if not concepts_to_assess and module.learning_objectives:
+            concepts_to_assess = module.learning_objectives
+        
         result = self.assessment_content_generator(
-            assessment_title=module.assessment.title,
-            concepts_to_assess=", ".join(module.assessment.concepts_to_assess),
+            assessment_title=assessment_title,
+            concepts_to_assess=", ".join(concepts_to_assess),
             module_theme=module.theme
         )
         return result.assessment_content
@@ -829,10 +837,18 @@ class CourseGenerator(dspy.Module):
     def _generate_module_summary(self, module: LearningModule, overview_context: str) -> str:
         """Generate module summary"""
         
+        # Handle case where assessment might be None
+        key_concepts = []
+        if module.assessment and module.assessment.concepts_to_assess:
+            key_concepts = module.assessment.concepts_to_assess
+        elif module.learning_objectives:
+            # Fall back to learning objectives if no assessment concepts
+            key_concepts = module.learning_objectives
+        
         result = self.summary_generator(
             module_title=module.title,
             learning_objectives=", ".join(module.learning_objectives),
-            key_concepts=", ".join(module.assessment.concepts_to_assess),
+            key_concepts=", ".join(key_concepts),
             overview_context=overview_context
         )
         return result.summary

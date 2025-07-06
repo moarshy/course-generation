@@ -37,6 +37,12 @@ app.config_from_object({
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Filter out noisy LiteLLM logs
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 ##### ALL CONFIGURATION IS HERE #####
 # TODO: Add a way to configure the course generation process
@@ -298,68 +304,125 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
     """Stage 4: Generate final course content"""
     try:
         logger.info(f"Starting Stage 4 for course {course_id}: course generation")
+        logger.info(f"Stage 4 user_input: {user_input}")
         
         # Parse user input
         stage4_input = Stage4UserInput(**user_input)
+        logger.info(f"Stage 4 parsed input: {stage4_input}")
         
         # Get stage manager
         stage_manager = get_stage_manager(user_id, course_id)
+        logger.info(f"Stage manager created for user {user_id}, course {course_id}")
         
-        # Load previous stage data
-        stage3_data = stage_manager.load_stage_data(CourseGenerationStage.PATHWAY_BUILDING)
+        # Load previous stage data with debugging
+        logger.info("Loading Stage 3 data...")
+        # Load the paths data with the correct suffix
+        stage3_data = stage_manager.load_stage_data(CourseGenerationStage.PATHWAY_BUILDING, suffix="paths")
+        logger.info(f"Stage 3 data loaded: {stage3_data is not None}")
+        if stage3_data is None:
+            # Try without suffix for backward compatibility
+            logger.info("Trying to load Stage 3 data without suffix...")
+            stage3_data = stage_manager.load_stage_data(CourseGenerationStage.PATHWAY_BUILDING)
+            logger.info(f"Stage 3 data loaded (no suffix): {stage3_data is not None}")
+            if stage3_data is None:
+                raise ValueError("Stage 3 data is None - pathway building data not found")
+        logger.info(f"Stage 3 data keys: {list(stage3_data.keys()) if isinstance(stage3_data, dict) else type(stage3_data)}")
+        
+        logger.info("Loading Document Tree...")
         document_tree: DocumentTree = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS)
+        logger.info(f"Document tree loaded: {document_tree is not None}")
+        if document_tree is None:
+            raise ValueError("Document tree is None - document analysis data not found")
+        
+        logger.info("Loading Stage 2 result...")
         stage2_result = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS, suffix="result")
+        logger.info(f"Stage 2 result loaded: {stage2_result is not None}")
+        if stage2_result is None:
+            raise ValueError("Stage 2 result is None - document analysis result not found")
         
         # Get selected pathway
+        logger.info("Getting learning paths...")
+        if 'paths' not in stage3_data:
+            raise ValueError(f"'paths' key not found in stage3_data. Available keys: {list(stage3_data.keys())}")
+        
         learning_paths = stage3_data['paths']
+        logger.info(f"Learning paths found: {len(learning_paths) if learning_paths else 0}")
+        
         if stage4_input.custom_pathway:
+            logger.info("Using custom pathway from input")
             selected_pathway = stage4_input.custom_pathway
         else:
-            # Use the first pathway by default if no custom pathway
+            logger.info("Using first pathway from generated paths")
             selected_pathway = learning_paths[0] if learning_paths else None
         
+        logger.info(f"Selected pathway: {selected_pathway is not None}")
         if not selected_pathway:
             raise ValueError("No pathway available for course generation")
         
         # Get overview context
+        logger.info("Getting overview context...")
         overview_context = ""
-        if stage2_result.overview_doc:
+        if hasattr(stage2_result, 'overview_doc') and stage2_result.overview_doc:
+            logger.info("Loading Stage 1 result for overview...")
             stage1_result = stage_manager.load_stage_data(CourseGenerationStage.CLONE_REPO)
+            logger.info(f"Stage 1 result loaded: {stage1_result is not None}")
+            if stage1_result is None:
+                raise ValueError("Stage 1 result is None - clone repo data not found")
+            
             overview_path = Path(stage1_result.repo_path) / stage2_result.overview_doc
+            logger.info(f"Overview path: {overview_path}")
             if overview_path.exists():
                 with open(overview_path, 'r', encoding='utf-8') as f:
                     overview_context = f.read()[:2000]
+                logger.info(f"Overview context loaded: {len(overview_context)} chars")
+        else:
+            logger.info("No overview document specified")
         
         # Generate course
+        logger.info("Generating course...")
         course_generator = CourseGenerator()
+        logger.info(f"Course generator created: {course_generator is not None}")
+        
+        logger.info(f"Calling generate_course with pathway: {selected_pathway.title if hasattr(selected_pathway, 'title') else 'No title'}")
         generated_course = course_generator.generate_course(selected_pathway, document_tree, overview_context)
+        logger.info(f"Course generated: {generated_course is not None}")
+        if generated_course is None:
+            raise ValueError("Course generation failed - generated_course is None")
         
         # Export course to markdown
+        logger.info("Exporting course to markdown...")
         from worker.course_content_agent.modules import CourseExporter
         exporter = CourseExporter()
+        logger.info(f"Course exporter created: {exporter is not None}")
         
         # Create export directory
         user_dir = f"../data/{user_id.replace('|', '_').replace('/', '_')}/{course_id}"
         export_dir = f"{user_dir}/generated"
+        logger.info(f"Export directory: {export_dir}")
         
         export_success = exporter.export_to_markdown(generated_course, export_dir)
+        logger.info(f"Export success: {export_success}")
         
         if not export_success:
             raise ValueError("Failed to export course to markdown")
         
         # Create stage 4 result
+        logger.info("Creating Stage 4 result...")
         stage4_result = Stage4Result(
             generated_course_path="",  # Will be set after saving
             export_path=export_dir
         )
         
         # Save generated course
+        logger.info("Saving generated course...")
         course_path = stage_manager.save_stage_data(
             CourseGenerationStage.COURSE_GENERATION, generated_course
         )
         stage4_result.generated_course_path = course_path
+        logger.info(f"Course saved to: {course_path}")
         
         # Save stage result
+        logger.info("Saving stage result...")
         stage_manager.save_stage_data(
             CourseGenerationStage.COURSE_GENERATION, stage4_result
         )
@@ -378,11 +441,14 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         }
         
     except Exception as e:
+        import traceback
         logger.error(f"Stage 4 failed for course {course_id}: {str(e)}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
         return {
             'success': False,
             'stage': CourseGenerationStage.COURSE_GENERATION,
-            'error': str(e)
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }
 
 # Helper task for getting stage status

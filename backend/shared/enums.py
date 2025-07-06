@@ -60,5 +60,5 @@ class ComplexityLevel(str, Enum):
     """Complexity levels for content."""
     BEGINNER = "beginner"
     INTERMEDIATE = "intermediate"
-    # ADVANCED = "advanced"
+    ADVANCED = "advanced"
     # EXPERT = "expert" 

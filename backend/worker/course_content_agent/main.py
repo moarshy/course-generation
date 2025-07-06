@@ -4,14 +4,14 @@ import sys
 import multiprocessing as mp
 from pathlib import Path
 from datetime import datetime
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from dotenv import load_dotenv
 import dspy
 from typing import Optional, List
 import pickle
 
-from shared.models import DocumentTree, ComplexityLevel, DocumentType
-from worker.course_content_agent.modules import (
+from .models import DocumentTree, ComplexityLevel, DocumentType
+from .modules import (
     RepoManager, LearningPathGenerator, CourseGenerator, CourseExporter,
     process_single_document, process_llm_analysis
 )
@@ -54,7 +54,7 @@ dspy.configure(lm=dspy.LM("gemini/gemini-2.5-flash", cache=False, max_tokens=200
 # =============================================================================
 
 class CourseBuilder:
-    """Build courses from documentation repositories with threading"""
+    """Build courses from documentation repositories with multiprocessing"""
     
     def __init__(self, cache_dir: str = CACHE_DIR, max_workers: int = None):
         self.repo_manager = RepoManager(cache_dir)
@@ -64,17 +64,17 @@ class CourseBuilder:
         
         # Set max workers (default to CPU count - 1)
         self.max_workers = max_workers or max(1, mp.cpu_count() - 1)
-        logger.info(f"Using {self.max_workers} worker threads")
+        logger.info(f"Using {self.max_workers} worker processes")
     
     def _process_documents_parallel(self, md_files, repo_path):
-        """Process documents in parallel using threading"""
+        """Process documents in parallel using multiprocessing"""
         logger.info(f"Starting parallel processing of {len(md_files)} files...")
         
-        # Prepare arguments for threading (avoid multiprocessing in Celery workers)
+        # Prepare arguments for multiprocessing
         args = [(file_path, repo_path, True) for file_path in md_files]
         
-        # Process with threading (safer for Celery daemon processes)
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        # Process with multiprocessing
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             results = list(executor.map(process_single_document, args))
         
         # Log results
@@ -94,11 +94,11 @@ class CourseBuilder:
         """Process documents to extract basic content without LLM analysis"""
         logger.info(f"Processing raw content from {len(md_files)} files...")
         
-        # Prepare arguments for threading (avoid multiprocessing in Celery workers)
+        # Prepare arguments for multiprocessing
         args = [(file_path, tree.root_path, False) for file_path in md_files]
         
-        # Process with threading (safer for Celery daemon processes)
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        # Process with multiprocessing
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
             results = list(executor.map(process_single_document, args))
         
         # Log results
@@ -115,7 +115,7 @@ class CourseBuilder:
         return results
     
     def _apply_llm_analysis(self, processed_results, tree, overview_context: str = ""):
-        """Apply LLM analysis to processed documents - SEQUENTIAL processing to avoid DSPy threading issues"""
+        """Apply LLM analysis to processed documents using parallel processing"""
         
         successful_results = [r for r in processed_results if r['success']]
         
@@ -123,21 +123,84 @@ class CourseBuilder:
             logger.warning("No successful results to process with LLM")
             return 0
         
-        logger.info(f"Starting sequential LLM analysis of {len(successful_results)} documents...")
+        logger.info(f"Starting parallel LLM analysis of {len(successful_results)} documents...")
         if overview_context:
             logger.info("Using overview context for better document understanding")
         
-        # Process documents sequentially to avoid DSPy threading issues
+        # Prepare arguments for multiprocessing
+        llm_args = [(result, tree.root_path, overview_context) for result in successful_results]
+        
+        # Process with multiprocessing
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            llm_results = list(executor.map(process_llm_analysis, llm_args))
+        
+        # Process results and create nodes
         error_count = 0
         llm_error_count = 0
         
-        for i, result in enumerate(successful_results):
+        for llm_result in llm_results:
+            if not llm_result['success']:
+                logger.error(f"✗ LLM processing failed: {llm_result['relative_path']} - {llm_result['error']}")
+                error_count += 1
+                continue
+            
+            if not llm_result['llm_success']:
+                logger.warning(f"⚠ LLM analysis failed for {llm_result['relative_path']}, using basic metadata: {llm_result['error_msg']}")
+                llm_error_count += 1
+            
             try:
-                logger.info(f"Processing document {i+1}/{len(successful_results)}: {result['relative_path']}")
+                # Create DocumentNode from the processed data
+                from course_content_agent.models import DocumentNode
+                node_data = llm_result['node_data']
+                node = DocumentNode(**node_data)
+                tree.nodes[llm_result['relative_path']] = node
                 
-                # Process single document with LLM analysis
-                llm_result = process_llm_analysis((result, tree.root_path, overview_context))
-                
+            except Exception as e:
+                logger.error(f"Failed to create node for {llm_result['relative_path']}: {e}")
+                error_count += 1
+        
+        logger.info(f"LLM analysis complete: {len(tree.nodes)} nodes created")
+        if llm_error_count > 0:
+            logger.warning(f"⚠ {llm_error_count} documents used basic metadata due to LLM failures")
+        
+        return error_count
+    
+    def _apply_llm_analysis_batch(self, processed_results, tree, batch_size: int = 50, overview_context: str = ""):
+        """Apply LLM analysis in batches to manage memory usage"""
+        
+        successful_results = [r for r in processed_results if r['success']]
+        total_docs = len(successful_results)
+        
+        if not successful_results:
+            logger.warning("No successful results to process with LLM")
+            return 0
+        
+        logger.info(f"Starting batched LLM analysis of {total_docs} documents (batch size: {batch_size})...")
+        if overview_context:
+            logger.info("Using overview context for better document understanding")
+        
+        total_error_count = 0
+        total_llm_error_count = 0
+        
+        # Process in batches
+        for i in range(0, total_docs, batch_size):
+            batch_end = min(i + batch_size, total_docs)
+            batch_results = successful_results[i:batch_end]
+            
+            logger.info(f"Processing batch {i//batch_size + 1}/{(total_docs + batch_size - 1)//batch_size} ({len(batch_results)} documents)")
+            
+            # Prepare arguments for this batch
+            llm_args = [(result, tree.root_path, overview_context) for result in batch_results]
+            
+            # Process batch with multiprocessing
+            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+                llm_results = list(executor.map(process_llm_analysis, llm_args))
+            
+            # Process batch results
+            error_count = 0
+            llm_error_count = 0
+            
+            for llm_result in llm_results:
                 if not llm_result['success']:
                     logger.error(f"✗ LLM processing failed: {llm_result['relative_path']} - {llm_result['error']}")
                     error_count += 1
@@ -148,84 +211,13 @@ class CourseBuilder:
                 
                 try:
                     # Create DocumentNode from the processed data
-                    from shared.models import DocumentNode
+                    from course_content_agent.models import DocumentNode
                     node_data = llm_result['node_data']
                     node = DocumentNode(**node_data)
                     tree.nodes[llm_result['relative_path']] = node
                     
-                    logger.info(f"✓ Created node for {llm_result['relative_path']}")
-                    
                 except Exception as e:
                     logger.error(f"Failed to create node for {llm_result['relative_path']}: {e}")
-                    error_count += 1
-                    
-            except Exception as e:
-                logger.error(f"Error processing {result['relative_path']}: {e}")
-                error_count += 1
-        
-        logger.info(f"Sequential LLM analysis complete: {len(tree.nodes)} nodes created, {error_count} errors, {llm_error_count} LLM errors")
-        
-        if error_count > 0:
-            logger.warning(f"Some documents failed LLM analysis but will use basic metadata")
-        
-        return len(tree.nodes)
-    
-    def _apply_llm_analysis_batch(self, processed_results, tree, batch_size: int = 50, overview_context: str = ""):
-        """Apply LLM analysis to processed documents in batches - SEQUENTIAL processing to avoid DSPy threading issues"""
-        
-        successful_results = [r for r in processed_results if r['success']]
-        
-        if not successful_results:
-            logger.warning("No successful results to process with LLM")
-            return 0
-        
-        total_docs = len(successful_results)
-        logger.info(f"Starting batch LLM analysis of {total_docs} documents (batch size: {batch_size})")
-        if overview_context:
-            logger.info("Using overview context for better document understanding")
-        
-        total_error_count = 0
-        total_llm_error_count = 0
-        
-        # Process in batches sequentially to avoid DSPy threading issues
-        for i in range(0, total_docs, batch_size):
-            batch_end = min(i + batch_size, total_docs)
-            batch_results = successful_results[i:batch_end]
-            
-            logger.info(f"Processing batch {i//batch_size + 1}/{(total_docs + batch_size - 1)//batch_size} ({len(batch_results)} documents)")
-            
-            # Process batch sequentially instead of using ProcessPoolExecutor
-            error_count = 0
-            llm_error_count = 0
-            
-            for j, result in enumerate(batch_results):
-                try:
-                    logger.info(f"Processing document {i+j+1}/{total_docs}: {result['relative_path']}")
-                    
-                    # Process single document with LLM analysis
-                    llm_result = process_llm_analysis((result, tree.root_path, overview_context))
-                    
-                    if not llm_result['success']:
-                        logger.error(f"✗ LLM processing failed: {llm_result['relative_path']} - {llm_result['error']}")
-                        error_count += 1
-                        continue
-                    
-                    if not llm_result['llm_success']:
-                        llm_error_count += 1
-                    
-                    try:
-                        # Create DocumentNode from the processed data
-                        from shared.models import DocumentNode
-                        node_data = llm_result['node_data']
-                        node = DocumentNode(**node_data)
-                        tree.nodes[llm_result['relative_path']] = node
-                        
-                    except Exception as e:
-                        logger.error(f"Failed to create node for {llm_result['relative_path']}: {e}")
-                        error_count += 1
-                        
-                except Exception as e:
-                    logger.error(f"Error processing {result['relative_path']}: {e}")
                     error_count += 1
             
             total_error_count += error_count
@@ -234,11 +226,10 @@ class CourseBuilder:
             logger.info(f"Batch complete: {len(batch_results) - error_count} nodes created")
         
         logger.info(f"All batches complete: {len(tree.nodes)} total nodes created")
+        if total_llm_error_count > 0:
+            logger.warning(f"⚠ {total_llm_error_count} documents used basic metadata due to LLM failures")
         
-        if total_error_count > 0:
-            logger.warning(f"Some documents failed LLM analysis but will use basic metadata")
-        
-        return len(tree.nodes)
+        return total_error_count
     
     def _find_overview_document(self, doc_files, overview_filename):
         """

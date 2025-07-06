@@ -1,7 +1,7 @@
 import dspy
-from typing import List, Dict
+from typing import List
 from pydantic import BaseModel, Field
-from shared.models import DocumentType, ComplexityLevel
+from .models import DocumentType, ComplexityLevel
 
 # =============================================================================
 # Enhanced DSPy Signatures
