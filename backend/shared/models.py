@@ -194,6 +194,13 @@ class CourseGenerationRequest(BaseModel):
 # User Input Models
 # =============================================================================
 
+class Stage1UserInput(BaseModel):
+    """User input for Stage 1 - Repository selections."""
+    include_folders: List[str] = Field(default_factory=list)
+    overview_doc: Optional[str] = None
+    selection_timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Stage2UserInput(BaseModel):
     """User input for Stage 2 - Document Analysis."""
     include_folders: List[str] = Field(default_factory=list)
@@ -280,6 +287,7 @@ class Stage4UserInput(BaseModel):
 
 
 # API Input aliases for backward compatibility
+Stage1Input = Stage1UserInput
 Stage2Input = Stage2UserInput
 Stage3Input = Stage3UserInput
 Stage4Input = Stage4UserInput

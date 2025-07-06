@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from typing import Optional
 from shared.models import (
     CourseGenerationRequest, GenerationTaskStatus,
-    Stage1Response, Stage2Response, Stage2Input, Stage3Input, Stage3Response,
+    Stage1Response, Stage1Input, Stage2Response, Stage2Input, Stage3Input, Stage3Response,
     Stage4Input, Stage4Response, UpdateDocumentRequest,
     UpdateModuleRequest, CreateModuleRequest, UpdatePathwayRequest, ModuleReorderRequest
 )
@@ -56,7 +56,7 @@ async def start_course_generation(
             detail=f"Failed to start course generation: {str(e)}"
         )
 
-@router.get("/{course_id}/status", response_model=Optional[GenerationTaskStatus])
+@router.get("/{course_id}/status")
 async def get_generation_status(
     course_id: str,
     current_user_id: str = Depends(get_current_user_id)
@@ -106,6 +106,77 @@ async def get_stage1_result(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get Stage 1 result: {str(e)}"
+        )
+
+@router.post("/{course_id}/stage1/selections")
+async def save_stage1_selections(
+    course_id: str,
+    stage1_input: Stage1Input,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Save Stage 1 user selections"""
+    try:
+        # Verify course ownership
+        if not course_service.verify_course_ownership(course_id, current_user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Course not found"
+            )
+        
+        # Save Stage 1 selections
+        success = generation_service.save_stage1_selections(course_id, stage1_input)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save Stage 1 selections"
+            )
+        
+        return {
+            "message": "Stage 1 selections saved successfully",
+            "selections": stage1_input.model_dump()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to save Stage 1 selections for course {course_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save Stage 1 selections: {str(e)}"
+        )
+
+@router.get("/{course_id}/stage1/selections")
+async def get_stage1_selections(
+    course_id: str,
+    current_user_id: str = Depends(get_current_user_id)
+):
+    """Get Stage 1 user selections"""
+    try:
+        # Verify course ownership
+        if not course_service.verify_course_ownership(course_id, current_user_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Course not found"
+            )
+        
+        selections = generation_service.get_stage1_selections(course_id)
+        
+        if not selections:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Stage 1 selections not found"
+            )
+        
+        return selections
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get Stage 1 selections for course {course_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get Stage 1 selections: {str(e)}"
         )
 
 @router.post("/{course_id}/stage2")

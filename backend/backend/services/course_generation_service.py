@@ -8,7 +8,7 @@ from celery import Celery
 from backend.core.config import settings
 from shared.models import (
     CourseGenerationStage, GenerationStatus, GenerationTaskStatus,
-    Stage1Response, Stage2Response, Stage3Response, Stage4Response,
+    Stage1Response, Stage1Input, Stage2Response, Stage3Response, Stage4Response,
     Stage2Input, Stage3Input, Stage4Input, PathwaySummary, CourseSummary, DocumentSummary,
     DocumentMetadataUpdate, ModuleUpdate, ModuleCreate, PathwayUpdate, ModuleSummary
 )
@@ -68,8 +68,8 @@ class CourseGenerationService:
             logger.error(f"Failed to start course generation: {e}")
             raise
     
-    def get_task_status(self, course_id: str) -> Optional[GenerationTaskStatus]:
-        """Get current status of a generation task"""
+    def get_task_status(self, course_id: str) -> Optional[Dict[str, Any]]:
+        """Get current status of a generation task with per-stage information"""
         try:
             task_key = f"generation_task:{course_id}"
             task_data = self.redis_client.get(task_key)
@@ -84,29 +84,65 @@ class CourseGenerationService:
             
             # Update status based on Celery result
             if celery_result.state == 'PENDING':
-                status = GenerationStatus.PENDING
+                overall_status = GenerationStatus.PENDING
             elif celery_result.state == 'STARTED':
-                status = GenerationStatus.RUNNING
+                overall_status = GenerationStatus.RUNNING
             elif celery_result.state == 'SUCCESS':
-                status = GenerationStatus.COMPLETED
+                overall_status = GenerationStatus.COMPLETED
+                # Mark current stage as completed if task succeeded
+                current_stage = task_info.get('current_stage')
+                if current_stage:
+                    self._mark_stage_completed(course_id, CourseGenerationStage(current_stage))
             elif celery_result.state == 'FAILURE':
-                status = GenerationStatus.FAILED
+                overall_status = GenerationStatus.FAILED
             else:
-                status = GenerationStatus.RUNNING
+                overall_status = GenerationStatus.RUNNING
             
-            # Calculate progress based on stage
-            progress = self._calculate_progress(CourseGenerationStage(task_info['current_stage']))
+            # Get completed stages info
+            completed_stages = task_info.get('completed_stages', [])
+            current_stage = task_info.get('current_stage')
             
-            return GenerationTaskStatus(
-                task_id=task_info['task_id'],
-                course_id=task_info['course_id'],
-                current_stage=CourseGenerationStage(task_info['current_stage']),
-                status=status,
-                progress_percentage=progress,
-                created_at=datetime.fromisoformat(task_info['created_at']),
-                updated_at=datetime.fromisoformat(task_info['updated_at']),
-                error_message=str(celery_result.info) if celery_result.state == 'FAILURE' else None
-            )
+            # Determine status for each stage
+            stage_statuses = {}
+            for stage in ['CLONE_REPO', 'DOCUMENT_ANALYSIS', 'PATHWAY_BUILDING', 'COURSE_GENERATION']:
+                # Check both uppercase and lowercase versions for completion
+                stage_completed = (stage in completed_stages or 
+                                 stage.lower() in completed_stages or
+                                 any(s.upper() == stage for s in completed_stages))
+                
+                if stage_completed:
+                    stage_statuses[stage] = 'completed'
+                elif stage == current_stage or stage.lower() == current_stage:
+                    if overall_status == GenerationStatus.COMPLETED:
+                        stage_statuses[stage] = 'completed'
+                    elif overall_status == GenerationStatus.FAILED:
+                        stage_statuses[stage] = 'failed'
+                    else:
+                        stage_statuses[stage] = 'running'
+                else:
+                    stage_statuses[stage] = 'pending'
+            
+            # Calculate progress based on completed stages
+            progress = len(completed_stages) * 25
+            if current_stage and current_stage not in completed_stages:
+                if overall_status == GenerationStatus.COMPLETED:
+                    progress += 25  # Current stage completed
+                else:
+                    progress += 12  # Current stage partially done
+            
+            return {
+                'task_id': task_info['task_id'],
+                'course_id': task_info['course_id'],
+                'current_stage': current_stage,
+                'status': overall_status.value,
+                'progress_percentage': min(progress, 100),
+                'created_at': task_info['created_at'],
+                'updated_at': task_info['updated_at'],
+                'error_message': str(celery_result.info) if celery_result.state == 'FAILURE' else None,
+                'stage_statuses': stage_statuses,
+                'completed_stages': completed_stages,
+                'stage_completion_times': task_info.get('stage_completion_times', {})
+            }
             
         except Exception as e:
             logger.error(f"Failed to get task status for course {course_id}: {e}")
@@ -117,29 +153,139 @@ class CourseGenerationService:
         try:
             task_info = self._get_task_info(course_id)
             if not task_info:
+                logger.warning(f"No task info found for course {course_id}")
                 return None
             
+            user_id = task_info['user_id']
+            
+            # Try to load from saved file first
+            try:
+                import pickle
+                from pathlib import Path
+                
+                # Construct path to stage 1 file
+                safe_user_id = user_id.replace('|', '_').replace('/', '_')
+                base_data_dir = Path("../data")
+                course_dir = base_data_dir / safe_user_id / course_id
+                stage1_file = course_dir / "clone_repo.pkl"
+                
+                if stage1_file.exists():
+                    logger.info(f"Loading Stage 1 data from file: {stage1_file}")
+                    with open(stage1_file, 'rb') as f:
+                        stage1_data = pickle.load(f)
+                    
+                    logger.info(f"Successfully loaded Stage 1 data with repo_name: {stage1_data.repo_name}")
+                    
+                    return Stage1Response(
+                        repo_name=stage1_data.repo_name,
+                        available_folders=stage1_data.available_folders,
+                        available_files=stage1_data.available_files,
+                        suggested_overview_docs=stage1_data.suggested_overview_docs,
+                        all_overview_candidates=stage1_data.all_overview_candidates,
+                        total_files=len(stage1_data.available_files)
+                    )
+                else:
+                    logger.warning(f"Stage 1 file not found: {stage1_file}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to load Stage 1 data from file: {e}")
+            
+            # Fall back to Celery result (for backward compatibility)
             celery_result = self.celery_app.AsyncResult(task_info['task_id'])
             
-            if celery_result.state != 'SUCCESS':
+            logger.info(f"Celery task state for course {course_id}: {celery_result.state}")
+            if celery_result.state == 'FAILURE':
+                logger.error(f"Celery task failed: {celery_result.info}")
+                return None
+            elif celery_result.state != 'SUCCESS':
+                logger.info(f"Celery task not ready: {celery_result.state}")
                 return None
             
             result = celery_result.result
+            logger.info(f"Celery result for course {course_id}: {result}")
             if not result.get('success'):
+                logger.error(f"Task completed but was not successful: {result}")
                 return None
             
             stage1_data = result['result']
+            logger.info(f"Stage 1 data keys: {list(stage1_data.keys()) if isinstance(stage1_data, dict) else type(stage1_data)}")
+            
             return Stage1Response(
-                repo_name=stage1_data['repo_name'],
-                available_folders=stage1_data['available_folders'],
-                available_files=stage1_data['available_files'],
-                suggested_overview_docs=stage1_data['suggested_overview_docs'],
-                all_overview_candidates=stage1_data.get('all_overview_candidates', stage1_data['suggested_overview_docs']),  # Fallback for backward compatibility
-                total_files=len(stage1_data['available_files'])
+                repo_name=stage1_data.get('repo_name', 'Unknown'),
+                available_folders=stage1_data.get('available_folders', []),
+                available_files=stage1_data.get('available_files', []),
+                suggested_overview_docs=stage1_data.get('suggested_overview_docs', []),
+                all_overview_candidates=stage1_data.get('all_overview_candidates', stage1_data.get('suggested_overview_docs', [])),
+                total_files=len(stage1_data.get('available_files', []))
             )
             
         except Exception as e:
             logger.error(f"Failed to get Stage 1 result for course {course_id}: {e}")
+            return None
+    
+    def save_stage1_selections(self, course_id: str, stage1_input: Stage1Input) -> bool:
+        """Save Stage 1 user selections"""
+        try:
+            task_info = self._get_task_info(course_id)
+            if not task_info:
+                logger.warning(f"No task info found for course {course_id}")
+                return False
+            
+            user_id = task_info['user_id']
+            
+            # Save to file using the same pattern as other stages
+            import pickle
+            from pathlib import Path
+            
+            # Construct path to stage 1 selections file
+            safe_user_id = user_id.replace('|', '_').replace('/', '_')
+            base_data_dir = Path("../data")
+            course_dir = base_data_dir / safe_user_id / course_id
+            course_dir.mkdir(parents=True, exist_ok=True)
+            
+            selections_file = course_dir / "stage1_selections.pkl"
+            
+            # Save the selections
+            with open(selections_file, 'wb') as f:
+                pickle.dump(stage1_input, f)
+            
+            logger.info(f"Successfully saved Stage 1 selections for course {course_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to save Stage 1 selections for course {course_id}: {e}")
+            return False
+    
+    def get_stage1_selections(self, course_id: str) -> Optional[Stage1Input]:
+        """Get Stage 1 user selections"""
+        try:
+            task_info = self._get_task_info(course_id)
+            if not task_info:
+                return None
+            
+            user_id = task_info['user_id']
+            
+            # Load from file
+            import pickle
+            from pathlib import Path
+            
+            # Construct path to stage 1 selections file
+            safe_user_id = user_id.replace('|', '_').replace('/', '_')
+            base_data_dir = Path("../data")
+            course_dir = base_data_dir / safe_user_id / course_id
+            selections_file = course_dir / "stage1_selections.pkl"
+            
+            if selections_file.exists():
+                with open(selections_file, 'rb') as f:
+                    stage1_selections = pickle.load(f)
+                logger.info(f"Successfully loaded Stage 1 selections for course {course_id}")
+                return stage1_selections
+            else:
+                logger.warning(f"Stage 1 selections file not found: {selections_file}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get Stage 1 selections for course {course_id}: {e}")
             return None
     
     def start_stage2(self, user_id: str, course_id: str, stage2_input: Stage2Input) -> str:
@@ -486,16 +632,62 @@ class CourseGenerationService:
         return json.loads(task_data)
     
     def _update_task_stage(self, course_id: str, task_id: str, stage: CourseGenerationStage):
-        """Update task stage and ID"""
+        """Update task stage and ID, tracking completed stages"""
         task_info = self._get_task_info(course_id)
         if task_info:
+            # Initialize tracking fields if they don't exist
+            if 'completed_stages' not in task_info:
+                task_info['completed_stages'] = []
+            if 'stage_task_ids' not in task_info:
+                task_info['stage_task_ids'] = {}
+            if 'stage_completion_times' not in task_info:
+                task_info['stage_completion_times'] = {}
+            
+            # Mark previous stage as completed if starting a new stage
+            current_stage = task_info.get('current_stage')
+            if current_stage and current_stage != stage.value:
+                if current_stage not in task_info['completed_stages']:
+                    task_info['completed_stages'].append(current_stage)
+                    task_info['stage_completion_times'][current_stage] = datetime.utcnow().isoformat()
+            
+            # Update current stage info
             task_info['task_id'] = task_id
             task_info['current_stage'] = stage.value
             task_info['status'] = GenerationStatus.RUNNING.value
             task_info['updated_at'] = datetime.utcnow().isoformat()
+            task_info['stage_task_ids'][stage.value] = task_id
             
             task_key = f"generation_task:{course_id}"
             self.redis_client.set(task_key, json.dumps(task_info))
+    
+    def _ensure_tracking_fields(self, task_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensure task_info has all the new tracking fields for backward compatibility"""
+        if 'completed_stages' not in task_info:
+            task_info['completed_stages'] = []
+        if 'stage_task_ids' not in task_info:
+            task_info['stage_task_ids'] = {}
+        if 'stage_completion_times' not in task_info:
+            task_info['stage_completion_times'] = {}
+        return task_info
+    
+    def _mark_stage_completed(self, course_id: str, stage: CourseGenerationStage):
+        """Mark a specific stage as completed"""
+        task_info = self._get_task_info(course_id)
+        if task_info:
+            # Initialize tracking fields if they don't exist
+            if 'completed_stages' not in task_info:
+                task_info['completed_stages'] = []
+            if 'stage_completion_times' not in task_info:
+                task_info['stage_completion_times'] = {}
+            
+            # Mark stage as completed
+            if stage.value not in task_info['completed_stages']:
+                task_info['completed_stages'].append(stage.value)
+                task_info['stage_completion_times'][stage.value] = datetime.utcnow().isoformat()
+                task_info['updated_at'] = datetime.utcnow().isoformat()
+                
+                task_key = f"generation_task:{course_id}"
+                self.redis_client.set(task_key, json.dumps(task_info))
     
     def _calculate_progress(self, stage: CourseGenerationStage) -> int:
         """Calculate progress percentage based on current stage"""
@@ -686,7 +878,7 @@ class CourseGenerationService:
                 safe_user_id = user_id.replace('|', '_').replace('/', '_')
                 base_data_dir = Path("../data")
                 course_dir = base_data_dir / safe_user_id / course_id
-                learning_paths_file = course_dir / "learning_pathways.pkl"
+                learning_paths_file = course_dir / "pathway_building_paths.pkl"
                 
                 if not learning_paths_file.exists():
                     logger.error(f"Learning paths file not found: {learning_paths_file}")
@@ -694,7 +886,8 @@ class CourseGenerationService:
                 
                 # Load learning paths
                 with open(learning_paths_file, 'rb') as f:
-                    learning_paths = pickle.load(f)
+                    paths_data = pickle.load(f)
+                    learning_paths = paths_data['paths']
                 
                 # Validate indices
                 if pathway_index < 0 or pathway_index >= len(learning_paths):
@@ -769,7 +962,7 @@ class CourseGenerationService:
                 safe_user_id = user_id.replace('|', '_').replace('/', '_')
                 base_data_dir = Path("../data")
                 course_dir = base_data_dir / safe_user_id / course_id
-                learning_paths_file = course_dir / "learning_pathways.pkl"
+                learning_paths_file = course_dir / "pathway_building_paths.pkl"
                 
                 if not learning_paths_file.exists():
                     logger.error(f"Learning paths file not found: {learning_paths_file}")
@@ -777,7 +970,8 @@ class CourseGenerationService:
                 
                 # Load learning paths
                 with open(learning_paths_file, 'rb') as f:
-                    learning_paths = pickle.load(f)
+                    paths_data = pickle.load(f)
+                    learning_paths = paths_data['paths']
                 
                 # Validate pathway index
                 if pathway_index < 0 or pathway_index >= len(learning_paths):
@@ -859,7 +1053,7 @@ class CourseGenerationService:
                 safe_user_id = user_id.replace('|', '_').replace('/', '_')
                 base_data_dir = Path("../data")
                 course_dir = base_data_dir / safe_user_id / course_id
-                learning_paths_file = course_dir / "learning_pathways.pkl"
+                learning_paths_file = course_dir / "pathway_building_paths.pkl"
                 
                 if not learning_paths_file.exists():
                     logger.error(f"Learning paths file not found: {learning_paths_file}")
@@ -867,7 +1061,8 @@ class CourseGenerationService:
                 
                 # Load learning paths
                 with open(learning_paths_file, 'rb') as f:
-                    learning_paths = pickle.load(f)
+                    paths_data = pickle.load(f)
+                    learning_paths = paths_data['paths']
                 
                 # Validate indices
                 if pathway_index < 0 or pathway_index >= len(learning_paths):
@@ -927,7 +1122,7 @@ class CourseGenerationService:
                 safe_user_id = user_id.replace('|', '_').replace('/', '_')
                 base_data_dir = Path("../data")
                 course_dir = base_data_dir / safe_user_id / course_id
-                learning_paths_file = course_dir / "learning_pathways.pkl"
+                learning_paths_file = course_dir / "pathway_building_paths.pkl"
                 
                 if not learning_paths_file.exists():
                     logger.error(f"Learning paths file not found: {learning_paths_file}")
@@ -935,7 +1130,8 @@ class CourseGenerationService:
                 
                 # Load learning paths
                 with open(learning_paths_file, 'rb') as f:
-                    learning_paths = pickle.load(f)
+                    paths_data = pickle.load(f)
+                    learning_paths = paths_data['paths']
                 
                 # Validate pathway index
                 if pathway_index < 0 or pathway_index >= len(learning_paths):
@@ -956,6 +1152,14 @@ class CourseGenerationService:
                 # Reorder modules
                 original_modules = pathway.modules.copy()
                 pathway.modules = [original_modules[i] for i in module_order]
+                
+                # Update module IDs to reflect new positions
+                for new_index, module in enumerate(pathway.modules):
+                    new_module_id = f"module_{new_index + 1:02d}"
+                    module.module_id = new_module_id
+                    # Also update assessment ID if it exists
+                    if hasattr(module, 'assessment') and module.assessment:
+                        module.assessment.assessment_id = f"{new_module_id}_assessment"
                 
                 # Save updated learning paths back to file
                 paths_data['paths'] = learning_paths

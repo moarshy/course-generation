@@ -165,22 +165,23 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
   };
 
   const reorderModules = async (pathwayIndex, sourceIndex, destinationIndex) => {
-    const pathway = learningPathways[pathwayIndex];
-    const modules = Array.from(pathway.modules);
-    const [removed] = modules.splice(sourceIndex, 1);
-    modules.splice(destinationIndex, 0, removed);
-    
-    // Create new order array
-    const newOrder = modules.map((_, index) => {
-      if (index < sourceIndex) return index;
-      if (index === destinationIndex) return sourceIndex;
-      if (index > sourceIndex && index <= destinationIndex) return index - 1;
-      if (index < destinationIndex && index >= sourceIndex) return index + 1;
-      return index;
-    });
-    
     try {
       setSaving(true);
+      
+      // Create the new order array - this represents the sequence of original indices
+      const originalLength = learningPathways[pathwayIndex].modules.length;
+      const newOrder = Array.from({length: originalLength}, (_, i) => i);
+      
+      // Move the source index to the destination position
+      const [movedIndex] = newOrder.splice(sourceIndex, 1);
+      newOrder.splice(destinationIndex, 0, movedIndex);
+      
+      console.log('Reordering modules:', {
+        sourceIndex,
+        destinationIndex,
+        newOrder
+      });
+      
       const token = await getAccessTokenSilently();
       
       await axios.put(`${API_BASE_URL}/course-generation/${courseId}/stage3/pathway/${pathwayIndex}/modules/reorder`, {
@@ -338,11 +339,13 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
             <h4 className="font-semibold mb-2">Modules ({currentPathway.modules.length})</h4>
             
             <DragDropContext onDragEnd={handleDragEnd}>
-              <Droppable droppableId="modules">
+              <Droppable droppableId={`pathway-${selectedPathway}-modules`}>
                 {(provided) => (
                   <div {...provided.droppableProps} ref={provided.innerRef}>
                     {currentPathway.modules.map((module, moduleIndex) => {
-                      const draggableId = module.module_id || `module-${moduleIndex}`;
+                      // Use module_id if available, otherwise use a combination of title and index for stability
+                      const moduleKey = module.module_id || `${module.title}-${moduleIndex}`;
+                      const draggableId = `pathway-${selectedPathway}-module-${moduleKey}`;
                       return (
                         <Draggable 
                           key={draggableId} 
@@ -468,7 +471,7 @@ const PathwayEditModal = ({ pathway, onSave, onCancel, saving }) => {
   const [formData, setFormData] = useState({
     title: pathway.title || '',
     description: pathway.description || '',
-    target_complexity: pathway.target_complexity || 'INTERMEDIATE',
+    target_complexity: pathway.target_complexity || 'intermediate',
     estimated_duration: pathway.estimated_duration || '',
     prerequisites: pathway.prerequisites || []
   });
@@ -513,9 +516,9 @@ const PathwayEditModal = ({ pathway, onSave, onCancel, saving }) => {
               onChange={(e) => setFormData({...formData, target_complexity: e.target.value})}
               className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
-              <option value="BEGINNER">Beginner</option>
-              <option value="INTERMEDIATE">Intermediate</option>
-              <option value="ADVANCED">Advanced</option>
+              <option value="beginner">Beginner</option>
+              <option value="intermediate">Intermediate</option>
+              <option value="advanced">Advanced</option>
             </select>
           </div>
 
@@ -558,7 +561,7 @@ const ModuleEditModal = ({ module, onSave, onCancel, saving, availableDocuments 
     title: module.title || '',
     description: module.description || '',
     theme: module.theme || '',
-    target_complexity: module.target_complexity || 'INTERMEDIATE',
+    target_complexity: module.target_complexity || 'intermediate',
     learning_objectives: module.learning_objectives || [],
     linked_documents: module.linked_documents || []
   });
@@ -636,9 +639,9 @@ const ModuleEditModal = ({ module, onSave, onCancel, saving, availableDocuments 
               onChange={(e) => setFormData({...formData, target_complexity: e.target.value})}
               className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
-              <option value="BEGINNER">Beginner</option>
-              <option value="INTERMEDIATE">Intermediate</option>
-              <option value="ADVANCED">Advanced</option>
+              <option value="beginner">Beginner</option>
+              <option value="intermediate">Intermediate</option>
+              <option value="advanced">Advanced</option>
             </select>
           </div>
 
@@ -726,7 +729,7 @@ const ModuleCreateModal = ({ onSave, onCancel, saving, availableDocuments = [] }
     title: '',
     description: '',
     theme: 'General',
-    target_complexity: 'INTERMEDIATE',
+    target_complexity: 'intermediate',
     learning_objectives: [''],
     linked_documents: []
   });
@@ -806,9 +809,9 @@ const ModuleCreateModal = ({ onSave, onCancel, saving, availableDocuments = [] }
               onChange={(e) => setFormData({...formData, target_complexity: e.target.value})}
               className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
-              <option value="BEGINNER">Beginner</option>
-              <option value="INTERMEDIATE">Intermediate</option>
-              <option value="ADVANCED">Advanced</option>
+              <option value="beginner">Beginner</option>
+              <option value="intermediate">Intermediate</option>
+              <option value="advanced">Advanced</option>
             </select>
           </div>
 

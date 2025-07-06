@@ -3,6 +3,7 @@ import { useAuth0 } from '@auth0/auth0-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { Stage1Content, Stage2Content, Stage3Content, Stage4Content } from '../components/StageContent';
+import Stage1Component from '../components/Stage1Component';
 import StageTrail from '../components/StageTrail';
 
 const CourseCreationPage = () => {
@@ -11,7 +12,7 @@ const CourseCreationPage = () => {
   const { getAccessTokenSilently } = useAuth0();
   
   const [course, setCourse] = useState(null);
-  const [currentStage, setCurrentStage] = useState('start');
+  const [currentStage, setCurrentStage] = useState('repo');
   const [completedStages, setCompletedStages] = useState(new Set());
   const [taskStatus, setTaskStatus] = useState(null);
   const [stageData, setStageData] = useState({});
@@ -59,16 +60,29 @@ const CourseCreationPage = () => {
       if (response.data) {
         console.log('Found existing generation:', response.data);
         setTaskStatus(response.data);
-        updateStageProgress(response.data.current_stage, response.data.status);
+        updateStageProgress(response.data);
         
-        // Load stage-specific data based on current stage
-        if (response.data.current_stage === 'clone_repo' && response.data.status === 'completed') {
+        // Load stage-specific data based on completed stages
+        const stageStatuses = response.data.stage_statuses || {};
+        const completedStages = response.data.completed_stages || [];
+        
+        // Helper function to check if stage is completed
+        const isStageCompleted = (stageKey) => {
+          return stageStatuses[stageKey] === 'completed' || 
+                 stageStatuses[stageKey.toLowerCase()] === 'completed' ||
+                 completedStages.includes(stageKey.toLowerCase()) ||
+                 completedStages.includes(stageKey);
+        };
+        
+        if (isStageCompleted('CLONE_REPO') && !stageData.repo) {
           console.log('Loading stage 1 data...');
           await loadStage1Data();
-        } else if (response.data.current_stage === 'document_analysis' && response.data.status === 'completed') {
+        }
+        if (isStageCompleted('DOCUMENT_ANALYSIS') && !stageData.analysis) {
           console.log('Loading stage 2 data...');
           await loadStage2Data();
-        } else if (response.data.current_stage === 'pathway_building' && response.data.status === 'completed') {
+        }
+        if (isStageCompleted('PATHWAY_BUILDING') && !stageData.pathways) {
           console.log('Loading stage 3 data...');
           await loadStage3Data();
         }
@@ -84,19 +98,76 @@ const CourseCreationPage = () => {
     }
   };
 
-  const updateStageProgress = (stage, status) => {
+  const updateStageProgress = (taskStatusData) => {
+    // Handle case where taskStatusData is null/undefined (new courses)
+    if (!taskStatusData) {
+      setCurrentStage('repo');
+      setCompletedStages(new Set());
+      return;
+    }
+    
     const stageMap = {
+      'CLONE_REPO': 'repo',
       'clone_repo': 'repo',
-      'document_analysis': 'analysis', 
+      'DOCUMENT_ANALYSIS': 'analysis',
+      'document_analysis': 'analysis',
+      'PATHWAY_BUILDING': 'pathways',
       'pathway_building': 'pathways',
+      'COURSE_GENERATION': 'generation',
       'course_generation': 'generation'
     };
     
-    const mappedStage = stageMap[stage];
-    if (mappedStage) {
-      setCurrentStage(mappedStage);
-      if (status === 'completed') {
-        setCompletedStages(prev => new Set([...prev, mappedStage]));
+    // Use new detailed stage statuses if available, fallback to old structure
+    if (taskStatusData.stage_statuses) {
+      const newCompletedStages = new Set();
+      let activeStage = null;
+      
+      // Process each stage status
+      Object.entries(taskStatusData.stage_statuses).forEach(([stage, status]) => {
+        const mappedStage = stageMap[stage];
+        if (mappedStage) {
+          if (status === 'completed') {
+            newCompletedStages.add(mappedStage);
+          } else if (status === 'running' || status === 'failed') {
+            activeStage = mappedStage;
+          }
+        }
+      });
+      
+      // Also check the completed_stages array for backward compatibility
+      if (taskStatusData.completed_stages) {
+        taskStatusData.completed_stages.forEach(stage => {
+          const mappedStage = stageMap[stage];
+          if (mappedStage) {
+            newCompletedStages.add(mappedStage);
+          }
+        });
+      }
+      
+      setCompletedStages(newCompletedStages);
+      
+              // Handle stage progression logic
+        if (activeStage) {
+          // There's an active backend task, switch to that stage
+          setCurrentStage(activeStage);
+        } else {
+          // No active backend task
+          // Don't automatically advance stages when tasks complete
+          // Let the user control progression by clicking "Next"
+          // Only set initial stage if none is set
+          if (!currentStage) {
+            setCurrentStage('repo');
+          }
+          // Otherwise, keep the current stage unchanged
+        }
+    } else {
+      // Fallback to old logic for backward compatibility
+      const mappedStage = stageMap[taskStatusData.current_stage];
+      if (mappedStage) {
+        setCurrentStage(mappedStage);
+        if (taskStatusData.status === 'completed') {
+          setCompletedStages(prev => new Set([...prev, mappedStage]));
+        }
       }
     }
   };
@@ -133,50 +204,52 @@ const CourseCreationPage = () => {
       if (response.data) {
         console.log('Poll result:', response.data);
         setTaskStatus(response.data);
-        updateStageProgress(response.data.current_stage, response.data.status);
+        updateStageProgress(response.data);
         
         // Load stage data when stages complete
-        if (response.data.status === 'completed') {
-          const stage = response.data.current_stage;
-          console.log(`Stage ${stage} completed, loading data...`);
-          
-          // Load stage-specific data
-          if (stage === 'clone_repo') {
-            await loadStage1Data();
-          } else if (stage === 'document_analysis') {
-            await loadStage2Data();
-          } else if (stage === 'pathway_building') {
-            await loadStage3Data();
-          }
+        const stageStatuses = response.data.stage_statuses || {};
+        const completedStages = response.data.completed_stages || [];
+        
+        // Helper function to check if stage is completed
+        const isStageCompleted = (stageKey) => {
+          return stageStatuses[stageKey] === 'completed' || 
+                 stageStatuses[stageKey.toLowerCase()] === 'completed' ||
+                 completedStages.includes(stageKey.toLowerCase()) ||
+                 completedStages.includes(stageKey);
+        };
+        
+        // Load data for newly completed stages
+        if (isStageCompleted('CLONE_REPO') && !stageData.repo) {
+          console.log('Stage 1 completed, loading data...');
+          await loadStage1Data();
+        } else if (isStageCompleted('CLONE_REPO') && stageData.repo) {
+          console.log('Stage 1 completed, data already loaded:', stageData.repo);
+        }
+        if (isStageCompleted('DOCUMENT_ANALYSIS') && !stageData.analysis) {
+          console.log('Stage 2 completed, loading data...');
+          await loadStage2Data();
+        }
+        if (isStageCompleted('PATHWAY_BUILDING') && !stageData.pathways) {
+          console.log('Stage 3 completed, loading data...');
+          await loadStage3Data();
         }
         
         // Handle stage transitions and polling logic
-        if (response.data.status === 'running' || response.data.status === 'pending') {
+        const currentStageStatus = response.data.status;
+        if (currentStageStatus === 'running' || currentStageStatus === 'pending') {
           console.log('Continuing polling...');
           setTimeout(pollTaskStatus, 2000);
-        } else if (response.data.status === 'completed') {
-          const stage = response.data.current_stage;
-          console.log(`Stage ${stage} completed, handling transition...`);
-          
-          // Handle stage transitions
-          if (stage === 'clone_repo') {
-            // After repo clone, user needs to configure Stage 2
-            setCurrentStage('analysis');
-            console.log('Polling stopped, waiting for user input for Stage 2');
-          } else if (stage === 'document_analysis') {
-            // After document analysis, stay on analysis stage to review results
-            setCurrentStage('analysis');
-            console.log('Polling stopped, document analysis complete, user can review results');
-          } else if (stage === 'pathway_building') {
-            // After pathway building, user needs to select pathway
-            setCurrentStage('pathways');
-            console.log('Polling stopped, waiting for user input for Stage 3');
-          } else if (stage === 'course_generation') {
-            // Final stage completed
-            setCurrentStage('generation');
-            console.log('Polling stopped, course generation complete');
+        } else if (currentStageStatus === 'completed') {
+          // Check if any stage is still running
+          const hasRunningStage = Object.values(stageStatuses).includes('running');
+          if (hasRunningStage) {
+            console.log('Another stage is running, continuing polling...');
+            setTimeout(pollTaskStatus, 2000);
+          } else {
+            console.log('All stages completed or waiting for user input');
+            // Stage transitions are handled by the updateStageProgress function
           }
-        } else if (response.data.status === 'failed') {
+        } else if (currentStageStatus === 'failed') {
           console.log('Generation failed:', response.data.error_message);
           setError(response.data.error_message || 'Generation failed');
         }
@@ -241,6 +314,17 @@ const CourseCreationPage = () => {
       );
     }
 
+    // Show start section if no task has been started yet
+    if (currentStage === 'repo' && !taskStatus) {
+      return (
+        <StartSection 
+          course={course}
+          onStart={(repoUrl) => handleStartGeneration(repoUrl)}
+          isLoading={isLoading}
+        />
+      );
+    }
+
     switch (currentStage) {
       case 'start':
         return (
@@ -252,7 +336,8 @@ const CourseCreationPage = () => {
         );
       case 'repo':
         return (
-          <Stage1Content 
+          <Stage1Component 
+            course={course}
             status={getStageStatus('repo')}
             taskStatus={taskStatus}
             stageData={stageData.repo}
@@ -357,10 +442,10 @@ const CourseCreationPage = () => {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">
-                  {stages.find(s => s.id === currentStage)?.title || 'Getting Started'}
+                  {currentStage === 'repo' && !taskStatus ? 'Getting Started' : (stages.find(s => s.id === currentStage)?.title || 'Getting Started')}
                 </h2>
                 <p className="text-gray-600">
-                  {stages.find(s => s.id === currentStage)?.description || 'Let\'s start generating your course'}
+                  {currentStage === 'repo' && !taskStatus ? 'Let\'s start generating your course' : (stages.find(s => s.id === currentStage)?.description || 'Let\'s start generating your course')}
                 </p>
               </div>
               <div className="flex items-center space-x-3">
@@ -420,29 +505,48 @@ const CourseCreationPage = () => {
     
     try {
       const token = await getAccessTokenSilently();
-      const stageEndpoints = {
-        'repo': '/stage2',
-        'analysis': '/stage3', 
-        'pathways': '/stage4'
-      };
       
-      const endpoint = stageEndpoints[stageId];
-      if (endpoint) {
+      // Special handling for Stage 1 (repo) - save selections first
+      if (stageId === 'repo') {
+        // First, save the Stage 1 selections
         await axios.post(
-          `${API_BASE_URL}/course-generation/${courseId}${endpoint}`,
+          `${API_BASE_URL}/course-generation/${courseId}/stage1/selections`,
           data || {},
           { headers: { Authorization: `Bearer ${token}` } }
         );
         
-        const nextStageMap = {
-          'repo': 'analysis',
-          'analysis': 'pathways',
-          'pathways': 'generation'
+        // Then start Stage 2 with the same data
+        await axios.post(
+          `${API_BASE_URL}/course-generation/${courseId}/stage2`,
+          data || {},
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+      } else {
+        // For other stages, use the normal flow
+        const stageEndpoints = {
+          'analysis': '/stage3', 
+          'pathways': '/stage4'
         };
         
-        setCurrentStage(nextStageMap[stageId]);
-        pollTaskStatus();
+        const endpoint = stageEndpoints[stageId];
+        if (endpoint) {
+          await axios.post(
+            `${API_BASE_URL}/course-generation/${courseId}${endpoint}`,
+            data || {},
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        }
       }
+      
+      const nextStageMap = {
+        'repo': 'analysis',
+        'analysis': 'pathways',
+        'pathways': 'generation'
+      };
+      
+      setCurrentStage(nextStageMap[stageId]);
+      pollTaskStatus();
+      
     } catch (error) {
       setError(error.response?.data?.detail || `Failed to proceed to next stage`);
     } finally {

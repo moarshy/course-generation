@@ -1,12 +1,53 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth0 } from '@auth0/auth0-react';
+import axios from 'axios';
 
-const Stage1Component = ({ course, taskStatus, stageData, onNext }) => {
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+
+const Stage1Component = ({ course, status, taskStatus, stageData, onNext }) => {
+  const { getAccessTokenSilently } = useAuth0();
   const [selectedFolders, setSelectedFolders] = useState([]);
   const [selectedOverviewDoc, setSelectedOverviewDoc] = useState('');
   const [error, setError] = useState('');
+  const [loadingSelections, setLoadingSelections] = useState(false);
 
-  const isCompleted = taskStatus?.status === 'completed';
-  const isLoading = taskStatus?.status === 'running';
+  // Extract courseId from course object
+  const courseId = course?.id || course?.course_id || course?.project_id;
+
+  const isCompleted = status === 'completed';
+  const isLoading = status === 'active' && taskStatus?.status === 'running';
+
+  // Load previously saved selections when component mounts
+  useEffect(() => {
+    const loadSavedSelections = async () => {
+      if (!courseId) {
+        return;
+      }
+      
+      try {
+        setLoadingSelections(true);
+        const token = await getAccessTokenSilently();
+        const response = await axios.get(
+          `${API_BASE_URL}/course-generation/${courseId}/stage1/selections`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        
+        if (response.data) {
+          setSelectedFolders(response.data.include_folders || []);
+          setSelectedOverviewDoc(response.data.overview_doc || '');
+        }
+      } catch (error) {
+        // If no saved selections found, that's OK - user hasn't made selections yet
+        if (error.response?.status !== 404) {
+          console.error('Error loading saved selections:', error);
+        }
+      } finally {
+        setLoadingSelections(false);
+      }
+    };
+
+    loadSavedSelections();
+  }, [courseId, getAccessTokenSilently]);
 
   const handleFolderToggle = (folder) => {
     setSelectedFolders(prev => 
@@ -46,7 +87,30 @@ const Stage1Component = ({ course, taskStatus, stageData, onNext }) => {
     );
   }
 
-  if (!isCompleted || !stageData) {
+  // Show loading state if stage is completed but data hasn't loaded yet
+  if (isCompleted && !stageData) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">Loading Repository Data</h3>
+        <p className="text-gray-600">Loading folder structure and document information...</p>
+      </div>
+    );
+  }
+
+  // Show loading state when loading saved selections
+  if (loadingSelections) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">Loading Saved Selections</h3>
+        <p className="text-gray-600">Loading your previously selected folders and documents...</p>
+      </div>
+    );
+  }
+
+  // Show failure state if stage is not completed
+  if (!isCompleted) {
     return (
       <div className="text-center py-8">
         <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">

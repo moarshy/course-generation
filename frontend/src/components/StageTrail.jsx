@@ -87,7 +87,27 @@ const StageTrail = ({
     
     if (status === 'active') {
       const progress = getProgressPercentage(stage.id);
-      return progress ? `${progress}% complete` : 'In progress...';
+      if (progress) {
+        return `${progress}% complete`;
+      }
+      
+      // Handle new courses without task status
+      if (!taskStatus) {
+        switch (stage.id) {
+          case 'repo':
+            return 'Ready to start';
+          case 'analysis':
+            return 'Waiting for repository';
+          case 'pathways':
+            return 'Waiting for analysis';
+          case 'generation':
+            return 'Waiting for pathways';
+          default:
+            return 'Ready to start';
+        }
+      }
+      
+      return 'In progress...';
     }
     
     return status === 'pending' ? 'Pending' : '';
