@@ -513,39 +513,60 @@ class CourseGenerationService:
                         # Load learning paths from file
                         with open(learning_paths_file, 'rb') as f:
                             paths_data = pickle.load(f)
-                            learning_paths = paths_data['paths']
+                        
+                        # Check if the paths_data has the expected structure
+                        if not isinstance(paths_data, dict):
+                            logger.error(f"Loaded paths_data is not a dictionary: {type(paths_data)}")
+                            return None
+                            
+                        if 'paths' not in paths_data:
+                            logger.error(f"'paths' key not found in paths_data. Available keys: {list(paths_data.keys())}")
+                            return None
+                            
+                        learning_paths = paths_data['paths']
+                        
+                        if not learning_paths:
+                            logger.warning(f"Learning paths is empty for course {course_id}")
+                            return None
                         
                         # Convert to PathwaySummary objects
                         pathways = []
                         for i, path in enumerate(learning_paths):
-                            # For each pathway, include full module data with learning objectives and linked documents
-                            full_modules = []
-                            for m in path.modules:
-                                # Create a dictionary with full module data (not just summary)
-                                module_data = {
-                                    'module_id': getattr(m, 'module_id', f'module-{i}-{len(full_modules)}'),
-                                    'title': m.title,
-                                    'description': m.description,
-                                    'theme': m.theme,
-                                    'target_complexity': m.target_complexity.value if hasattr(m.target_complexity, 'value') else str(m.target_complexity),
-                                    'learning_objectives': getattr(m, 'learning_objectives', []),
-                                    'linked_documents': getattr(m, 'linked_documents', [])
-                                }
-                                full_modules.append(module_data)
-                            
-                            pathways.append({
-                                'index': i,
-                                'title': path.title,
-                                'description': path.description,
-                                'complexity': path.target_complexity.value if hasattr(path.target_complexity, 'value') else str(path.target_complexity),
-                                'module_count': len(path.modules),
-                                'modules': full_modules  # Use full module data instead of ModuleSummary
-                            })
+                            try:
+                                # For each pathway, include full module data with learning objectives and linked documents
+                                full_modules = []
+                                for m in path.modules:
+                                    # Create a dictionary with full module data (not just summary)
+                                    module_data = {
+                                        'module_id': getattr(m, 'module_id', f'module-{i}-{len(full_modules)}'),
+                                        'title': m.title,
+                                        'description': m.description,
+                                        'theme': m.theme,
+                                        'target_complexity': m.target_complexity.value if hasattr(m.target_complexity, 'value') else str(m.target_complexity),
+                                        'learning_objectives': getattr(m, 'learning_objectives', []),
+                                        'linked_documents': getattr(m, 'linked_documents', [])
+                                    }
+                                    full_modules.append(module_data)
+                                
+                                pathways.append({
+                                    'index': i,
+                                    'title': path.title,
+                                    'description': path.description,
+                                    'complexity': path.target_complexity.value if hasattr(path.target_complexity, 'value') else str(path.target_complexity),
+                                    'module_count': len(path.modules),
+                                    'modules': full_modules  # Use full module data instead of ModuleSummary
+                                })
+                            except Exception as path_error:
+                                logger.error(f"Error processing pathway {i}: {path_error}")
+                                continue
+                        
+                        # Get document tree summary safely
+                        document_tree_summary = paths_data.get('document_tree_summary', {})
                         
                         return {
                             'pathways': pathways,
-                            'total_documents': paths_data['document_tree_summary'].get('total_documents', 0),
-                            'repo_name': paths_data['document_tree_summary'].get('repo_name', 'Unknown')
+                            'total_documents': document_tree_summary.get('total_documents', 0),
+                            'repo_name': document_tree_summary.get('repo_name', 'Unknown')
                         }
                 finally:
                     # Restore original sys.path
