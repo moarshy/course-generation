@@ -115,16 +115,16 @@ def stage1_clone_repository(self, user_id: str, course_id: str, repo_url: str) -
         logger.info(f"Stage 1 completed for course {course_id}")
         return {
             'success': True,
-            'stage': CourseGenerationStage.CLONE_REPO,
+            'stage': CourseGenerationStage.CLONE_REPO.value,
             'result': stage1_result.model_dump(),
-            'next_stage': CourseGenerationStage.DOCUMENT_ANALYSIS
+            'next_stage': CourseGenerationStage.DOCUMENT_ANALYSIS.value
         }
         
     except Exception as e:
         logger.error(f"Stage 1 failed for course {course_id}: {str(e)}")
         return {
             'success': False,
-            'stage': CourseGenerationStage.CLONE_REPO,
+            'stage': CourseGenerationStage.CLONE_REPO.value,
             'error': str(e)
         }
 
@@ -207,16 +207,16 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
         logger.info(f"Stage 2 completed for course {course_id}")
         return {
             'success': True,
-            'stage': CourseGenerationStage.DOCUMENT_ANALYSIS,
+            'stage': CourseGenerationStage.DOCUMENT_ANALYSIS.value,
             'result': stage2_result.model_dump(),
-            'next_stage': CourseGenerationStage.PATHWAY_BUILDING
+            'next_stage': CourseGenerationStage.PATHWAY_BUILDING.value
         }
         
     except Exception as e:
         logger.error(f"Stage 2 failed for course {course_id}: {str(e)}")
         return {
             'success': False,
-            'stage': CourseGenerationStage.DOCUMENT_ANALYSIS,
+            'stage': CourseGenerationStage.DOCUMENT_ANALYSIS.value,
             'error': str(e)
         }
 
@@ -277,7 +277,7 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
                 'index': i,
                 'title': path.title,
                 'description': path.description,
-                'complexity': path.target_complexity,
+                'complexity': path.target_complexity.value if hasattr(path.target_complexity, 'value') else str(path.target_complexity),
                 'module_count': len(path.modules),
                 'modules': [{'title': m.title, 'theme': m.theme, 'description': m.description} for m in path.modules]
             })
@@ -285,17 +285,17 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
         logger.info(f"Stage 3 completed for course {course_id}")
         return {
             'success': True,
-            'stage': CourseGenerationStage.PATHWAY_BUILDING,
+            'stage': CourseGenerationStage.PATHWAY_BUILDING.value,
             'result': stage3_result.model_dump(),
             'pathways': pathway_summaries,
-            'next_stage': CourseGenerationStage.COURSE_GENERATION
+            'next_stage': CourseGenerationStage.COURSE_GENERATION.value
         }
         
     except Exception as e:
         logger.error(f"Stage 3 failed for course {course_id}: {str(e)}")
         return {
             'success': False,
-            'stage': CourseGenerationStage.PATHWAY_BUILDING,
+            'stage': CourseGenerationStage.PATHWAY_BUILDING.value,
             'error': str(e)
         }
 
@@ -358,6 +358,60 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         logger.info(f"Selected pathway: {selected_pathway is not None}")
         if not selected_pathway:
             raise ValueError("No pathway available for course generation")
+        
+        # Debug the selected pathway
+        logger.info(f"Selected pathway type: {type(selected_pathway)}")
+        logger.info(f"Selected pathway is dict: {isinstance(selected_pathway, dict)}")
+        if hasattr(selected_pathway, '__dict__'):
+            logger.info(f"Selected pathway attributes: {list(selected_pathway.__dict__.keys())}")
+        if hasattr(selected_pathway, 'pathway_id'):
+            logger.info(f"Selected pathway HAS pathway_id: {selected_pathway.pathway_id}")
+        else:
+            logger.warning("Selected pathway MISSING pathway_id attribute")
+            
+        # Convert dictionary back to GroupedLearningPath if needed
+        if isinstance(selected_pathway, dict):
+            logger.info("Converting pathway dictionary to GroupedLearningPath object")
+            logger.info(f"Pathway dictionary keys: {list(selected_pathway.keys())}")
+            logger.info(f"Pathway dictionary has pathway_id: {'pathway_id' in selected_pathway}")
+            
+            # If pathway_id is missing, add it
+            if 'pathway_id' not in selected_pathway:
+                logger.warning("pathway_id missing from dictionary, generating one")
+                selected_pathway['pathway_id'] = f"pathway_{selected_pathway.get('title', 'unknown').lower().replace(' ', '_')}"
+            
+            from worker.course_content_agent.models import GroupedLearningPath
+            selected_pathway = GroupedLearningPath(**selected_pathway)
+            logger.info(f"Converted pathway - ID: {selected_pathway.pathway_id}")
+        elif not hasattr(selected_pathway, 'pathway_id'):
+            # It's a shared.models.GroupedLearningPath, convert to worker.course_content_agent.models.GroupedLearningPath
+            logger.warning("Converting shared.models.GroupedLearningPath to worker model")
+            
+            # Convert safely with proper field mapping
+            pathway_dict = selected_pathway.model_dump() if hasattr(selected_pathway, 'model_dump') else selected_pathway.__dict__
+            
+            # Add missing required fields
+            pathway_dict['pathway_id'] = f"pathway_{pathway_dict.get('title', 'unknown').lower().replace(' ', '_')}"
+            pathway_dict['welcome_message'] = pathway_dict.get('welcome_message', f"Welcome to {pathway_dict.get('title', 'this course')}!")
+            
+            # Remove fields that don't exist in worker model
+            pathway_dict.pop('estimated_duration', None)
+            pathway_dict.pop('prerequisites', None)
+            
+            # Fix modules - handle assessment field differences
+            if 'modules' in pathway_dict:
+                for module in pathway_dict['modules']:
+                    if isinstance(module, dict) and module.get('assessment') is None:
+                        # Create a basic assessment if missing
+                        module['assessment'] = {
+                            'assessment_id': f"{module.get('module_id', 'unknown')}_assessment",
+                            'title': f"{module.get('title', 'Module')} Assessment",
+                            'concepts_to_assess': module.get('learning_objectives', [])[:3]
+                        }
+            
+            from worker.course_content_agent.models import GroupedLearningPath
+            selected_pathway = GroupedLearningPath(**pathway_dict)
+            logger.info(f"Converted pathway with ID: {selected_pathway.pathway_id}")
         
         # Get overview context
         logger.info("Getting overview context...")
@@ -430,7 +484,7 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         logger.info(f"Stage 4 completed for course {course_id}")
         return {
             'success': True,
-            'stage': CourseGenerationStage.COURSE_GENERATION,
+            'stage': CourseGenerationStage.COURSE_GENERATION.value,
             'result': stage4_result.model_dump(),
             'course_summary': {
                 'title': generated_course.title,
@@ -446,7 +500,7 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         logger.error(f"Stack trace: {traceback.format_exc()}")
         return {
             'success': False,
-            'stage': CourseGenerationStage.COURSE_GENERATION,
+            'stage': CourseGenerationStage.COURSE_GENERATION.value,
             'error': str(e),
             'traceback': traceback.format_exc()
         }

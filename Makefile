@@ -14,7 +14,7 @@ setup-env: ## Setup environment files
 dev-up: ## Start development environment
 	@echo "Starting Naptha Course Creator development environment..."
 	@echo "1. Starting services with Docker Compose..."
-	docker-compose up -d
+	docker-compose up redis -d
 	@echo "2. Services started successfully!"
 	@echo ""
 	@echo "Services running:"

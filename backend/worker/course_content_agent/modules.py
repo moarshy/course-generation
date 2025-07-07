@@ -102,7 +102,7 @@ def process_llm_analysis(args):
             'path': relative_path,
             'filename': result['file_path'].name,
             'content': result['content'],
-            'metadata': metadata,
+            'metadata': metadata.model_dump() if hasattr(metadata, 'model_dump') else metadata,
             'parent_path': str(result['file_path'].parent.relative_to(Path(tree_root_path))) 
             if result['file_path'].parent != Path(tree_root_path) else None
         }
