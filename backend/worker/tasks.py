@@ -5,6 +5,9 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 import dspy
 from dotenv import load_dotenv
+import redis
+import json
+from datetime import datetime
 
 from shared.models import (
     CourseGenerationStage, StageStatus, CourseGenerationTask,
@@ -159,6 +162,31 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
         repo_manager = RepoManager(cache_dir)
         md_files = repo_manager.find_documentation_files(repo_path, stage2_input.include_folders)
         
+        # Initialize detailed progress tracking in Redis
+        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        progress_key = f"stage2_progress:{course_id}"
+        
+        # Create list of files to process
+        files_to_process = []
+        for file_path in md_files:
+            relative_path = str(file_path.relative_to(repo_path))
+            files_to_process.append(relative_path)
+        
+        # Initialize progress data
+        progress_data = {
+            'total_files': len(files_to_process),
+            'processed_files': 0,
+            'failed_files': 0,
+            'current_file': '',
+            'files_to_process': files_to_process,
+            'completed_files': [],
+            'failed_files_list': [],
+            'stage': 'raw_processing',
+            'stage_description': 'Extracting content from markdown files',
+            'updated_at': datetime.now().isoformat()
+        }
+        redis_client.set(progress_key, json.dumps(progress_data))
+        
         # Create document tree
         tree = DocumentTree(
             repo_url=str(repo_path),
@@ -169,8 +197,19 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
             cross_references={}
         )
         
-        # Process documents (basic extraction)
-        processed_results = builder._process_raw_documents(md_files, tree)
+        # Process documents with progress tracking
+        processed_results = builder._process_raw_documents_with_progress(
+            md_files, tree, progress_key, redis_client, user_id, course_id
+        )
+        
+        # Update progress for LLM analysis stage
+        progress_data['stage'] = 'llm_analysis'
+        progress_data['stage_description'] = 'Analyzing content with AI for key concepts and structure'
+        progress_data['processed_files'] = 0  # Reset for LLM stage
+        progress_data['completed_files'] = []
+        progress_data['current_file'] = ''
+        progress_data['updated_at'] = datetime.now().isoformat()
+        redis_client.set(progress_key, json.dumps(progress_data))
         
         # Find overview document if specified
         overview_context = ""
@@ -180,13 +219,22 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
                 with open(overview_path, 'r', encoding='utf-8') as f:
                     overview_context = get_n_words(f.read(), OVERVIEW_DOC_MAX_WORDS)
         
-        # Apply LLM analysis
-        successfully_processed_count = builder._apply_llm_analysis(processed_results, tree, overview_context)
+        # Apply LLM analysis with progress tracking
+        successfully_processed_count = builder._apply_llm_analysis_with_progress(
+            processed_results, tree, overview_context, progress_key, redis_client, user_id, course_id
+        )
         
         # Calculate counts
         total_raw_files = len(processed_results)
         successful_raw_files = len([r for r in processed_results if r['success']])
         failed_raw_files = total_raw_files - successful_raw_files
+        
+        # Final progress update
+        progress_data['stage'] = 'completed'
+        progress_data['stage_description'] = 'Document analysis completed'
+        progress_data['current_file'] = ''
+        progress_data['updated_at'] = datetime.now().isoformat()
+        redis_client.set(progress_key, json.dumps(progress_data))
         
         # Create stage 2 result
         stage2_result = Stage2Result(
@@ -208,6 +256,9 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
             CourseGenerationStage.DOCUMENT_ANALYSIS, stage2_result, suffix="result"
         )
         
+        # Clean up progress data after completion
+        redis_client.delete(progress_key)
+        
         logger.info(f"Stage 2 completed for course {course_id}")
         return {
             'success': True,
@@ -218,6 +269,21 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
         
     except Exception as e:
         logger.error(f"Stage 2 failed for course {course_id}: {str(e)}")
+        
+        # Update progress with error
+        try:
+            redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+            progress_key = f"stage2_progress:{course_id}"
+            progress_data = {
+                'stage': 'failed',
+                'stage_description': f'Document analysis failed: {str(e)}',
+                'error': str(e),
+                'updated_at': datetime.now().isoformat()
+            }
+            redis_client.set(progress_key, json.dumps(progress_data))
+        except:
+            pass  # Don't let Redis errors mask the original error
+        
         return {
             'success': False,
             'stage': CourseGenerationStage.DOCUMENT_ANALYSIS.value,

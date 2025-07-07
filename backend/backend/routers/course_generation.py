@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Query
 from typing import Optional
 from shared.models import (
     CourseGenerationRequest, GenerationTaskStatus,
@@ -681,4 +681,40 @@ async def cancel_generation(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to cancel generation: {str(e)}"
+        )
+
+@router.get("/stage2/progress")
+async def get_stage2_progress(course_id: str = Query(..., description="Course ID")):
+    """Get detailed progress for Stage 2 document analysis"""
+    try:
+        detailed_progress = generation_service.get_stage2_detailed_progress(course_id)
+        
+        if detailed_progress is None:
+            # No detailed progress found - check if task is running
+            task_status = generation_service.get_task_status(course_id)
+            if task_status and task_status.get('current_stage') == 'DOCUMENT_ANALYSIS':
+                # Task is running but no detailed progress yet
+                return {
+                    "stage": "initializing",
+                    "stage_description": "Initializing document analysis...",
+                    "percentage": 0,
+                    "total_files": 0,
+                    "processed_files": 0,
+                    "current_file": "",
+                    "completed_files": [],
+                    "failed_files_list": []
+                }
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No progress information available"
+                )
+        
+        return detailed_progress
+        
+    except Exception as e:
+        logger.error(f"Failed to get Stage 2 progress for course {course_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve progress: {str(e)}"
         ) 

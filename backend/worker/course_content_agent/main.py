@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import dspy
 from typing import Optional, List
 import pickle
+import json
 
 from .models import DocumentTree, ComplexityLevel, DocumentType
 from .modules import (
@@ -229,6 +230,152 @@ class CourseBuilder:
         
         logger.warning(f"Overview file '{overview_filename}' not found in documentation files")
         return ""
+
+    def _process_raw_documents_with_progress(self, md_files, tree, progress_key, redis_client, user_id, course_id):
+        """Process documents to extract basic content with detailed progress tracking"""
+        logger.info(f"Processing raw content from {len(md_files)} files with progress tracking...")
+        
+        # Process sequentially with progress updates
+        results = []
+        for i, file_path in enumerate(md_files):
+            try:
+                # Update progress
+                relative_path = str(file_path.relative_to(tree.root_path))
+                progress_data = json.loads(redis_client.get(progress_key) or '{}')
+                progress_data.update({
+                    'current_file': relative_path,
+                    'processed_files': i,
+                    'updated_at': datetime.now().isoformat()
+                })
+                redis_client.set(progress_key, json.dumps(progress_data))
+                
+                # Process the file
+                result = process_single_document((file_path, tree.root_path, False))
+                results.append(result)
+                
+                # Update completion status
+                progress_data = json.loads(redis_client.get(progress_key) or '{}')
+                if result['success']:
+                    progress_data['completed_files'].append(relative_path)
+                    progress_data['processed_files'] = i + 1
+                else:
+                    progress_data['failed_files_list'].append({
+                        'file': relative_path,
+                        'error': result.get('error', 'Unknown error')
+                    })
+                    progress_data['failed_files'] = len(progress_data['failed_files_list'])
+                    progress_data['processed_files'] = i + 1
+                
+                progress_data['updated_at'] = datetime.now().isoformat()
+                redis_client.set(progress_key, json.dumps(progress_data))
+                
+            except Exception as e:
+                logger.error(f"Error processing file {file_path}: {e}")
+                results.append({
+                    'success': False,
+                    'relative_path': str(file_path.relative_to(tree.root_path)),
+                    'error': str(e)
+                })
+        
+        # Log results
+        successful = sum(1 for r in results if r['success'])
+        failed = len(results) - successful
+        
+        logger.info(f"Raw document processing complete: {successful} successful, {failed} failed")
+        
+        return results
+    
+    def _apply_llm_analysis_with_progress(self, processed_results, tree, overview_context, progress_key, redis_client, user_id, course_id):
+        """Apply LLM analysis to processed documents with detailed progress tracking"""
+        
+        successful_results = [r for r in processed_results if r['success']]
+        
+        if not successful_results:
+            logger.warning("No successful results to process with LLM")
+            return 0
+        
+        logger.info(f"Starting sequential LLM analysis of {len(successful_results)} documents with progress tracking...")
+        if overview_context:
+            logger.info("Using overview context for better document understanding")
+        
+        # Process sequentially with progress updates
+        error_count = 0
+        llm_error_count = 0
+        
+        for i, result in enumerate(successful_results):
+            try:
+                # Update progress
+                relative_path = result['relative_path']
+                progress_data = json.loads(redis_client.get(progress_key) or '{}')
+                progress_data.update({
+                    'current_file': relative_path,
+                    'processed_files': i,
+                    'updated_at': datetime.now().isoformat()
+                })
+                redis_client.set(progress_key, json.dumps(progress_data))
+                
+                # Process with LLM
+                llm_result = process_llm_analysis((result, tree.root_path, overview_context))
+                
+                # Update completion status
+                progress_data = json.loads(redis_client.get(progress_key) or '{}')
+                
+                if not llm_result['success']:
+                    logger.error(f"✗ LLM processing failed: {llm_result['relative_path']} - {llm_result['error']}")
+                    error_count += 1
+                    progress_data['failed_files_list'].append({
+                        'file': relative_path,
+                        'error': llm_result.get('error', 'LLM processing failed')
+                    })
+                    progress_data['failed_files'] = len(progress_data['failed_files_list'])
+                    continue
+                
+                if not llm_result['llm_success']:
+                    logger.warning(f"⚠ LLM analysis failed for {llm_result['relative_path']}, using basic metadata: {llm_result['error_msg']}")
+                    llm_error_count += 1
+                
+                try:
+                    # Create DocumentNode from the processed data
+                    from .models import DocumentNode
+                    node_data = llm_result['node_data']
+                    node = DocumentNode(**node_data)
+                    tree.nodes[llm_result['relative_path']] = node
+                    
+                    # Update successful completion
+                    progress_data['completed_files'].append(relative_path)
+                    progress_data['processed_files'] = i + 1
+                    
+                except Exception as e:
+                    logger.error(f"Failed to create node for {llm_result['relative_path']}: {e}")
+                    error_count += 1
+                    progress_data['failed_files_list'].append({
+                        'file': relative_path,
+                        'error': f'Node creation failed: {str(e)}'
+                    })
+                    progress_data['failed_files'] = len(progress_data['failed_files_list'])
+                
+                progress_data['updated_at'] = datetime.now().isoformat()
+                redis_client.set(progress_key, json.dumps(progress_data))
+                
+            except Exception as e:
+                logger.error(f"Error in LLM analysis for {result['relative_path']}: {e}")
+                error_count += 1
+                
+                # Update error in progress
+                progress_data = json.loads(redis_client.get(progress_key) or '{}')
+                progress_data['failed_files_list'].append({
+                    'file': result['relative_path'],
+                    'error': str(e)
+                })
+                progress_data['failed_files'] = len(progress_data['failed_files_list'])
+                progress_data['updated_at'] = datetime.now().isoformat()
+                redis_client.set(progress_key, json.dumps(progress_data))
+        
+        logger.info(f"LLM analysis complete: {len(tree.nodes)} nodes created")
+        if llm_error_count > 0:
+            logger.warning(f"⚠ {llm_error_count} documents used basic metadata due to LLM failures")
+        
+        return error_count
 
     def build_course(self, 
                      repo_path: str, 

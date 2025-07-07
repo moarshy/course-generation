@@ -10,13 +10,24 @@ const Stage2Component = ({ course, taskStatus, stageData, onNext }) => {
   const [editingDocument, setEditingDocument] = useState(null);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [detailedProgress, setDetailedProgress] = useState(null);
 
   // Extract courseId from course object or URL params
   const courseId = course?.id || course?.course_id || course?.project_id || window.location.pathname.split('/').pop();
 
-  const isCompleted = taskStatus?.status === 'completed';
-  const isLoading = taskStatus?.status === 'running';
-  const isFailed = taskStatus?.status === 'failed';
+  // Better loading detection logic
+  const isCompleted = taskStatus?.stage_statuses?.DOCUMENT_ANALYSIS === 'completed' || 
+                      taskStatus?.stage_statuses?.document_analysis === 'completed' ||
+                      taskStatus?.completed_stages?.includes('DOCUMENT_ANALYSIS') ||
+                      taskStatus?.completed_stages?.includes('document_analysis');
+  
+  const isLoading = (taskStatus?.stage_statuses?.DOCUMENT_ANALYSIS === 'running' || 
+                     taskStatus?.stage_statuses?.document_analysis === 'running' ||
+                     (taskStatus?.current_stage === 'DOCUMENT_ANALYSIS' && taskStatus?.status === 'running') ||
+                     (taskStatus?.current_stage === 'document_analysis' && taskStatus?.status === 'running'));
+  
+  const isFailed = taskStatus?.stage_statuses?.DOCUMENT_ANALYSIS === 'failed' || 
+                   taskStatus?.stage_statuses?.document_analysis === 'failed';
 
   // Load analyzed documents when stage data is available
   useEffect(() => {
@@ -24,6 +35,46 @@ const Stage2Component = ({ course, taskStatus, stageData, onNext }) => {
       setAnalyzedDocuments(stageData.analyzed_documents);
     }
   }, [stageData]);
+
+  // Load detailed progress when stage 2 is running
+  useEffect(() => {
+    let progressInterval;
+    
+    if (isLoading && courseId) {
+      // Poll for detailed progress every 2 seconds
+      const fetchProgress = async () => {
+        try {
+          const token = await getAccessTokenSilently();
+          const response = await axios.get(
+            `${API_BASE_URL}/course-generation/stage2/progress`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              params: { course_id: courseId }
+            }
+          );
+          setDetailedProgress(response.data);
+        } catch (error) {
+          console.error('Error fetching detailed progress:', error);
+          // Don't set detailed progress on error to avoid clearing existing data
+        }
+      };
+      
+      // Fetch immediately
+      fetchProgress();
+      
+      // Set up polling
+      progressInterval = setInterval(fetchProgress, 2000);
+    } else {
+      // Clear detailed progress when not loading
+      setDetailedProgress(null);
+    }
+    
+    return () => {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+      }
+    };
+  }, [isLoading, courseId, getAccessTokenSilently]);
 
   // Document type options
   const documentTypes = [
@@ -38,19 +89,20 @@ const Stage2Component = ({ course, taskStatus, stageData, onNext }) => {
   ];
 
   const refreshStageData = async () => {
+    setRefreshing(true);
     try {
-      setRefreshing(true);
       const token = await getAccessTokenSilently();
       const response = await axios.get(
         `${API_BASE_URL}/course-generation/${courseId}/stage2`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       
-      if (response.data && response.data.analyzed_documents) {
+      if (response.data.analyzed_documents) {
         setAnalyzedDocuments(response.data.analyzed_documents);
       }
     } catch (error) {
-      console.error('Failed to refresh stage data:', error);
+      console.error('Error refreshing stage data:', error);
+      alert('Failed to refresh stage data. Please try again.');
     } finally {
       setRefreshing(false);
     }
@@ -72,33 +124,25 @@ const Stage2Component = ({ course, taskStatus, stageData, onNext }) => {
   const handleSaveDocument = async () => {
     if (!editingDocument) return;
 
+    setSaving(true);
     try {
-      setSaving(true);
       const token = await getAccessTokenSilently();
-      
-      // Prepare update data
-      const updateData = {
-        document_id: editingDocument.id,
-        metadata_updates: {
-          doc_type: editingDocument.metadata.doc_type,
-          semantic_summary: editingDocument.metadata.semantic_summary,
-          key_concepts: editingDocument.key_concepts.split(',').map(s => s.trim()).filter(s => s),
-          learning_objectives: editingDocument.learning_objectives.split(',').map(s => s.trim()).filter(s => s)
-        }
-      };
-
       await axios.put(
-        `${API_BASE_URL}/course-generation/${courseId}/stage2/document`,
-        updateData,
+        `${API_BASE_URL}/course-generation/${courseId}/documents/${editingDocument.id}`,
+        editingDocument,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-
-      // Refresh the data to get updated results
-      await refreshStageData();
+      
+      // Update local state
+      setAnalyzedDocuments(prev => 
+        prev.map(doc => 
+          doc.id === editingDocument.id ? editingDocument : doc
+        )
+      );
       setEditingDocument(null);
     } catch (error) {
-      console.error('Failed to update document:', error);
-      alert('Failed to update document. Please try again.');
+      console.error('Error saving document:', error);
+      alert('Failed to save document changes. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -131,39 +175,122 @@ const Stage2Component = ({ course, taskStatus, stageData, onNext }) => {
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
         <h3 className="text-lg font-medium text-gray-900 mb-2">Analyzing Documents</h3>
         <p className="text-gray-600 mb-4">
-          Processing selected documentation files and extracting key information...
+          {detailedProgress?.stage_description || 'Processing selected documentation files and extracting key information...'}
         </p>
         
-        <div className="max-w-md mx-auto">
-          <div className="flex justify-between text-sm text-gray-600 mb-2">
-            <span>Progress</span>
-            <span>{taskStatus?.progress_percentage || 0}%</span>
+        {/* Enhanced Progress Display */}
+        <div className="max-w-2xl mx-auto space-y-4">
+          {/* Main Progress Bar */}
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="flex justify-between text-sm text-gray-600 mb-2">
+              <span>Overall Progress</span>
+              <span>{detailedProgress?.percentage || taskStatus?.progress_percentage || 0}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-3">
+              <div 
+                className="bg-blue-500 h-3 rounded-full transition-all duration-300"
+                style={{ width: `${detailedProgress?.percentage || taskStatus?.progress_percentage || 0}%` }}
+              />
+            </div>
+            
+            {/* File Progress Details */}
+            {detailedProgress && (
+              <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-blue-600">
+                    {detailedProgress.processed_files || 0}
+                  </div>
+                  <div className="text-gray-600">Processed</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-gray-600">
+                    {detailedProgress.total_files || 0}
+                  </div>
+                  <div className="text-gray-600">Total Files</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-red-600">
+                    {detailedProgress.failed_files || 0}
+                  </div>
+                  <div className="text-gray-600">Failed</div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${taskStatus?.progress_percentage || 0}%` }}
-            />
-          </div>
+
+          {/* Current File Being Processed */}
+          {detailedProgress?.current_file && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse mr-3"></div>
+                <div className="flex-1">
+                  <div className="font-medium text-blue-900">Currently Processing:</div>
+                  <div className="text-sm font-mono text-blue-700 break-all">
+                    {detailedProgress.current_file}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Recently Completed Files */}
+          {detailedProgress?.completed_files && detailedProgress.completed_files.length > 0 && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="font-medium text-green-900 mb-2">Recently Completed:</div>
+              <div className="max-h-24 overflow-y-auto">
+                {detailedProgress.completed_files.slice(-5).map((file, index) => (
+                  <div key={index} className="flex items-center text-sm text-green-700 mb-1">
+                    <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <span className="font-mono truncate">{file}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Failed Files */}
+          {detailedProgress?.failed_files_list && detailedProgress.failed_files_list.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="font-medium text-red-900 mb-2">Failed Files:</div>
+              <div className="max-h-24 overflow-y-auto">
+                {detailedProgress.failed_files_list.map((failedFile, index) => (
+                  <div key={index} className="flex items-start text-sm text-red-700 mb-1">
+                    <svg className="w-4 h-4 text-red-500 mr-2 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                    <div className="flex-1">
+                      <div className="font-mono truncate">{failedFile.file}</div>
+                      <div className="text-xs text-red-600">{failedFile.error}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
+        {/* Processing Stage Description */}
         <div className="mt-6 text-left max-w-md mx-auto">
-          <h4 className="font-medium text-gray-900 mb-3">What's happening:</h4>
+          <h4 className="font-medium text-gray-900 mb-3">Current Stage: {detailedProgress?.stage || 'Processing'}</h4>
           <ul className="space-y-2 text-sm text-gray-600">
             <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                detailedProgress?.stage === 'raw_processing' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
+              }`}></div>
               <span>Extracting content from markdown files</span>
             </li>
             <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Analyzing document structure and headings</span>
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                detailedProgress?.stage === 'llm_analysis' ? 'bg-blue-500 animate-pulse' : 'bg-gray-300'
+              }`}></div>
+              <span>Analyzing content with AI for key concepts</span>
             </li>
             <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Identifying key concepts and topics</span>
-            </li>
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                detailedProgress?.stage === 'completed' ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
               <span>Classifying document types and complexity</span>
             </li>
           </ul>

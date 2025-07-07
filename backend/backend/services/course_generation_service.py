@@ -418,6 +418,45 @@ class CourseGenerationService:
             logger.error(f"Failed to get Stage 2 result for course {course_id}: {e}")
             return None
     
+    def get_stage2_detailed_progress(self, course_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed progress for Stage 2 document analysis"""
+        try:
+            progress_key = f"stage2_progress:{course_id}"
+            progress_data = self.redis_client.get(progress_key)
+            
+            if not progress_data:
+                return None
+            
+            progress_info = json.loads(progress_data)
+            
+            # Calculate percentage
+            total_files = progress_info.get('total_files', 0)
+            processed_files = progress_info.get('processed_files', 0)
+            
+            if total_files > 0:
+                percentage = min(int((processed_files / total_files) * 100), 100)
+            else:
+                percentage = 0
+            
+            return {
+                'total_files': total_files,
+                'processed_files': processed_files,
+                'failed_files': progress_info.get('failed_files', 0),
+                'current_file': progress_info.get('current_file', ''),
+                'files_to_process': progress_info.get('files_to_process', []),
+                'completed_files': progress_info.get('completed_files', []),
+                'failed_files_list': progress_info.get('failed_files_list', []),
+                'stage': progress_info.get('stage', 'unknown'),
+                'stage_description': progress_info.get('stage_description', ''),
+                'percentage': percentage,
+                'updated_at': progress_info.get('updated_at', ''),
+                'error': progress_info.get('error', None)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get Stage 2 detailed progress for course {course_id}: {e}")
+            return None
+    
     def start_stage3(self, user_id: str, course_id: str) -> str:
         """Start Stage 3 - Pathway Building"""
         try:
