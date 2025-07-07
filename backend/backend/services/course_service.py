@@ -3,7 +3,7 @@ import json
 import os
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone 
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from shared.models import Course, CourseCreate, CourseUpdate, CourseInDB, CourseStatus
@@ -52,7 +52,7 @@ class CourseService:
         """Create a new course"""
         try:
             course_id = str(uuid.uuid4())
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             
             # Create course directories
             dirs = self._ensure_course_directories(user_id, course_id)
@@ -129,7 +129,7 @@ class CourseService:
                 return None
             
             # Update fields
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             course_dict = {
                 "course_id": existing_course.course_id,
                 "title": course_data.title if course_data.title else existing_course.title,

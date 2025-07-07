@@ -43,9 +43,9 @@ const CourseGenerationModal = ({ isOpen, onClose, course }) => {
         
         // Load stage-specific data based on current stage
         if (response.data.current_stage === 'clone_repo' && response.data.status === 'completed') {
-          await loadStage1Data();
+          setTimeout(() => loadStage1Data(), 500); // Small delay for initial load
         } else if (response.data.current_stage === 'pathway_building' && response.data.status === 'completed') {
-          await loadStage3Data();
+          setTimeout(() => loadStage3Data(), 500); // Small delay for initial load
         }
       }
     } catch (error) {
@@ -53,7 +53,7 @@ const CourseGenerationModal = ({ isOpen, onClose, course }) => {
     }
   };
 
-  const loadStage1Data = async () => {
+  const loadStage1Data = async (retryCount = 0) => {
     try {
       const token = await getAccessTokenSilently();
       const response = await axios.get(
@@ -65,10 +65,31 @@ const CourseGenerationModal = ({ isOpen, onClose, course }) => {
       setStageData(prev => ({ ...prev, stage1: response.data }));
     } catch (error) {
       console.error('Failed to load stage 1 data:', error);
+      
+      // Handle different HTTP status codes appropriately
+      if (error.response?.status === 202) {
+        // Stage 1 is still in progress - retry with a longer delay
+        const delay = Math.min((retryCount + 1) * 3000, 10000); // 3s, 6s, 9s, max 10s
+        console.log(`Stage 1 still in progress, retrying in ${delay}ms (attempt ${retryCount + 1})`);
+        setTimeout(() => loadStage1Data(retryCount + 1), delay);
+      } else if (error.response?.status === 400) {
+        // Stage 1 failed - don't retry, show error
+        const errorMessage = error.response?.data?.detail || 'Repository analysis failed';
+        setError(errorMessage);
+      } else if (retryCount < 3) {
+        // Other errors - retry up to 3 times with increasing delays
+        const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
+        console.log(`Retrying stage 1 data load in ${delay}ms (attempt ${retryCount + 1}/3)`);
+        setTimeout(() => loadStage1Data(retryCount + 1), delay);
+      } else {
+        // Show error to user only after all retries failed
+        const errorMessage = error.response?.data?.detail || 'Failed to load repository analysis data';
+        setError(errorMessage);
+      }
     }
   };
 
-  const loadStage3Data = async () => {
+  const loadStage3Data = async (retryCount = 0) => {
     try {
       const token = await getAccessTokenSilently();
       const response = await axios.get(
@@ -80,6 +101,16 @@ const CourseGenerationModal = ({ isOpen, onClose, course }) => {
       setStageData(prev => ({ ...prev, stage3: response.data }));
     } catch (error) {
       console.error('Failed to load stage 3 data:', error);
+      
+      // Retry up to 3 times with increasing delays
+      if (retryCount < 3) {
+        const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
+        console.log(`Retrying stage 3 data load in ${delay}ms (attempt ${retryCount + 1}/3)`);
+        setTimeout(() => loadStage3Data(retryCount + 1), delay);
+      } else {
+        const errorMessage = error.response?.data?.detail || 'Failed to load learning pathways data';
+        setError(errorMessage);
+      }
     }
   };
 
@@ -122,9 +153,9 @@ const CourseGenerationModal = ({ isOpen, onClose, course }) => {
           
           if (response.data.status === 'completed') {
             if (response.data.current_stage === 'clone_repo') {
-              await loadStage1Data();
+              setTimeout(() => loadStage1Data(), 1000); // Small delay to ensure files are written
             } else if (response.data.current_stage === 'pathway_building') {
-              await loadStage3Data();
+              setTimeout(() => loadStage3Data(), 1000); // Small delay to ensure files are written
             }
             clearInterval(pollInterval);
           } else if (response.data.status === 'failed') {

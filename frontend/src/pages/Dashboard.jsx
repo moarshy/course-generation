@@ -5,6 +5,8 @@ import axios from 'axios';
 import CourseCard from '../components/CourseCard';
 import CreateCourseModal from '../components/CreateCourseModal';
 import EditCourseModal from '../components/EditCourseModal';
+import ModalProvider from '../components/ModalProvider';
+import { useModal } from '../hooks/useModal';
 
 const Dashboard = () => {
   const { getAccessTokenSilently, user } = useAuth0();
@@ -15,6 +17,16 @@ const Dashboard = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState(null);
+  
+  // Custom modal hook
+  const {
+    alertModal,
+    confirmModal,
+    closeAlert,
+    closeConfirm,
+    showError,
+    showDeleteConfirm
+  } = useModal();
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -80,26 +92,28 @@ const Dashboard = () => {
     }
   };
 
-  const handleDeleteCourse = async (courseId) => {
-    if (!confirm('Are you sure you want to delete this course? This action cannot be undone.')) {
-      return;
-    }
-    
-    try {
-      const token = await getAccessTokenSilently();
-      
-      await axios.delete(`${API_BASE_URL}/projects/${courseId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`
+  const handleDeleteCourse = (courseId) => {
+    showDeleteConfirm(
+      'Are you sure you want to delete this course? This action cannot be undone.',
+      async () => {
+        try {
+          const token = await getAccessTokenSilently();
+          
+          await axios.delete(`${API_BASE_URL}/projects/${courseId}`, {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          });
+          
+          // Refresh courses list
+          fetchCourses();
+        } catch (err) {
+          console.error('Error deleting course:', err);
+          showError('Failed to delete course');
         }
-      });
-      
-      // Refresh courses list
-      fetchCourses();
-    } catch (err) {
-      console.error('Error deleting course:', err);
-      alert('Failed to delete course');
-    }
+      },
+      'Delete Course'
+    );
   };
 
   const handleViewCourse = (courseId) => {
@@ -215,7 +229,13 @@ const Dashboard = () => {
           course={selectedCourse}
         />
 
-
+        <ModalProvider
+          alertModal={alertModal}
+          onCloseAlert={closeAlert}
+          confirmModal={confirmModal}
+          onCloseConfirm={closeConfirm}
+          onConfirm={confirmModal.onConfirm}
+        />
       </div>
     </div>
   );

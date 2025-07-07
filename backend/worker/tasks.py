@@ -45,7 +45,11 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 ##### ALL CONFIGURATION IS HERE #####
-# TODO: Add a way to configure the course generation process
+OVERVIEW_DOC_MAX_WORDS = 3000
+
+def get_n_words(text: str, max_words: int) -> int:
+    """Truncate text to max_words words."""
+    return " ".join(text.split()[:max_words])
 
 def get_stage_manager(user_id: str, course_id: str) -> StageDataManager:
     """Get a stage data manager for a specific user and course."""
@@ -174,7 +178,7 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
             overview_path = repo_path / stage2_input.overview_doc
             if overview_path.exists():
                 with open(overview_path, 'r', encoding='utf-8') as f:
-                    overview_context = f.read()[:2000]  # First 2000 chars
+                    overview_context = get_n_words(f.read(), OVERVIEW_DOC_MAX_WORDS)
         
         # Apply LLM analysis
         successfully_processed_count = builder._apply_llm_analysis(processed_results, tree, overview_context)
@@ -240,7 +244,7 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
             overview_path = Path(stage1_result.repo_path) / stage2_result.overview_doc
             if overview_path.exists():
                 with open(overview_path, 'r', encoding='utf-8') as f:
-                    overview_context = f.read()[:2000]
+                    overview_context = get_n_words(f.read(), OVERVIEW_DOC_MAX_WORDS)
         
         # Generate learning pathways
         path_generator = LearningPathGenerator()
@@ -427,7 +431,7 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
             logger.info(f"Overview path: {overview_path}")
             if overview_path.exists():
                 with open(overview_path, 'r', encoding='utf-8') as f:
-                    overview_context = f.read()[:2000]
+                    overview_context = get_n_words(f.read(), OVERVIEW_DOC_MAX_WORDS)
                 logger.info(f"Overview context loaded: {len(overview_context)} chars")
         else:
             logger.info("No overview document specified")

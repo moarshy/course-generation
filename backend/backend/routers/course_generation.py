@@ -96,6 +96,26 @@ async def get_stage1_result(
                 detail="Course not found"
             )
         
+        # Check generation status first
+        generation_status = generation_service.get_task_status(course_id)
+        
+        if generation_status:
+            stage_statuses = generation_status.get('stage_statuses', {})
+            clone_repo_status = stage_statuses.get('CLONE_REPO') or stage_statuses.get('clone_repo')
+            
+            # If Stage 1 is running or pending, return appropriate status
+            if clone_repo_status in ['running', 'pending']:
+                raise HTTPException(
+                    status_code=status.HTTP_202_ACCEPTED,
+                    detail="Stage 1 is still in progress"
+                )
+            elif clone_repo_status == 'failed':
+                error_message = generation_status.get('error_message', 'Repository analysis failed')
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=error_message
+                )
+        
         result = generation_service.get_stage1_result(course_id)
         return result
         
@@ -160,13 +180,40 @@ async def get_stage1_selections(
                 detail="Course not found"
             )
         
+        # First check the generation status to see if Stage 1 is still running
+        generation_status = generation_service.get_task_status(course_id)
+        
+        if generation_status:
+            stage_statuses = generation_status.get('stage_statuses', {})
+            clone_repo_status = stage_statuses.get('CLONE_REPO') or stage_statuses.get('clone_repo')
+            
+            # If Stage 1 is running or pending, return a specific response
+            if clone_repo_status in ['running', 'pending']:
+                raise HTTPException(
+                    status_code=status.HTTP_202_ACCEPTED,
+                    detail="Stage 1 is still in progress. Selections not available yet."
+                )
+            elif clone_repo_status == 'failed':
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Stage 1 failed. Cannot retrieve selections."
+                )
+        
+        # Try to get selections
         selections = generation_service.get_stage1_selections(course_id)
         
         if not selections:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Stage 1 selections not found"
-            )
+            # Check again if there's any task running
+            if generation_status and generation_status.get('status') == 'running':
+                raise HTTPException(
+                    status_code=status.HTTP_202_ACCEPTED,
+                    detail="Stage 1 is still in progress. Selections not available yet."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Stage 1 selections not found"
+                )
         
         return selections
         

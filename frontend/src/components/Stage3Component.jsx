@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
 import axios from 'axios';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import ModalProvider from './ModalProvider';
+import { useModal } from '../hooks/useModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -29,6 +31,16 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
   const [creatingModule, setCreatingModule] = useState(false);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  
+  // Custom modal hook
+  const {
+    alertModal,
+    confirmModal,
+    closeAlert,
+    closeConfirm,
+    showError,
+    showDeleteConfirm
+  } = useModal();
 
   // Extract courseId from course object or URL params
   const courseId = course?.id || course?.course_id || course?.project_id || window.location.pathname.split('/').pop();
@@ -101,7 +113,7 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
       
     } catch (error) {
       console.error('Error updating pathway:', error);
-      alert('Failed to update pathway. Please try again.');
+      showError('Failed to update pathway. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -126,7 +138,7 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
       
     } catch (error) {
       console.error('Error updating module:', error);
-      alert('Failed to update module. Please try again.');
+      showError('Failed to update module. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -150,32 +162,36 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
       
     } catch (error) {
       console.error('Error creating module:', error);
-      alert('Failed to create module. Please try again.');
+      showError('Failed to create module. Please try again.');
     } finally {
       setSaving(false);
     }
   };
 
-  const deleteModule = async (pathwayIndex, moduleIndex) => {
-    if (!confirm('Are you sure you want to delete this module?')) return;
-    
-    try {
-      setSaving(true);
-      const token = await getAccessTokenSilently();
-      
-      await axios.delete(`${API_BASE_URL}/course-generation/${courseId}/stage3/pathway/${pathwayIndex}/module/${moduleIndex}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      // Refresh pathways after deletion
-      await refreshLearningPathways();
-      
-    } catch (error) {
-      console.error('Error deleting module:', error);
-      alert('Failed to delete module. Please try again.');
-    } finally {
-      setSaving(false);
-    }
+  const deleteModule = (pathwayIndex, moduleIndex) => {
+    showDeleteConfirm(
+      'Are you sure you want to delete this module?',
+      async () => {
+        try {
+          setSaving(true);
+          const token = await getAccessTokenSilently();
+          
+          await axios.delete(`${API_BASE_URL}/course-generation/${courseId}/stage3/pathway/${pathwayIndex}/module/${moduleIndex}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          
+          // Refresh pathways after deletion
+          await refreshLearningPathways();
+          
+        } catch (error) {
+          console.error('Error deleting module:', error);
+          showError('Failed to delete module. Please try again.');
+        } finally {
+          setSaving(false);
+        }
+      },
+      'Delete Module'
+    );
   };
 
   const reorderModules = useCallback(async (pathwayIndex, sourceIndex, destinationIndex) => {
@@ -223,7 +239,7 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
       
     } catch (error) {
       console.error('Error reordering modules:', error);
-      alert('Failed to reorder modules. Please try again.');
+      showError('Failed to reorder modules. Please try again.');
       // Reload to revert changes only on error
       await refreshLearningPathways();
     } finally {
@@ -567,6 +583,14 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
           availableDocuments={availableDocuments}
         />
       )}
+
+      <ModalProvider
+        alertModal={alertModal}
+        onCloseAlert={closeAlert}
+        confirmModal={confirmModal}
+        onCloseConfirm={closeConfirm}
+        onConfirm={confirmModal.onConfirm}
+      />
     </div>
   );
 };

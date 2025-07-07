@@ -5,6 +5,8 @@ import axios from 'axios';
 import { Stage1Content, Stage2Content, Stage3Content, Stage4Content } from '../components/StageContent';
 import Stage1Component from '../components/Stage1Component';
 import StageTrail from '../components/StageTrail';
+import ToastContainer from '../components/ToastContainer';
+import { useToast } from '../hooks/useToast';
 
 const CourseCreationPage = () => {
   const { courseId } = useParams();
@@ -19,6 +21,9 @@ const CourseCreationPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  
+  // Toast notifications
+  const { toasts, removeToast, showSuccess, showError, showInfo } = useToast();
 
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
@@ -76,15 +81,15 @@ const CourseCreationPage = () => {
         
         if (isStageCompleted('CLONE_REPO') && !stageData.repo) {
           console.log('Loading stage 1 data...');
-          await loadStage1Data();
+          setTimeout(() => loadStage1Data(), 500); // Small delay for initial load
         }
         if (isStageCompleted('DOCUMENT_ANALYSIS') && !stageData.analysis) {
           console.log('Loading stage 2 data...');
-          await loadStage2Data();
+          setTimeout(() => loadStage2Data(), 500); // Small delay for initial load
         }
         if (isStageCompleted('PATHWAY_BUILDING') && !stageData.pathways) {
           console.log('Loading stage 3 data...');
-          await loadStage3Data();
+          setTimeout(() => loadStage3Data(), 500); // Small delay for initial load
         }
         
         // If a stage is running, start polling
@@ -221,20 +226,29 @@ const CourseCreationPage = () => {
                  completedStages.includes(stageKey);
         };
         
-        // Load data for newly completed stages
+        // Load data for newly completed stages (with small delay to ensure files are written)
         if (isStageCompleted('CLONE_REPO') && !stageData.repo) {
           console.log('Stage 1 completed, loading data...');
-          await loadStage1Data();
+          setTimeout(async () => {
+            await loadStage1Data();
+            showSuccess('✅ Repository analysis completed! Ready to select folders.');
+          }, 1000); // 1 second delay
         } else if (isStageCompleted('CLONE_REPO') && stageData.repo) {
           console.log('Stage 1 completed, data already loaded:', stageData.repo);
         }
         if (isStageCompleted('DOCUMENT_ANALYSIS') && !stageData.analysis) {
           console.log('Stage 2 completed, loading data...');
-          await loadStage2Data();
+          setTimeout(async () => {
+            await loadStage2Data();
+            showSuccess('✅ Document analysis completed! Review the results.');
+          }, 1000); // 1 second delay
         }
         if (isStageCompleted('PATHWAY_BUILDING') && !stageData.pathways) {
           console.log('Stage 3 completed, loading data...');
-          await loadStage3Data();
+          setTimeout(async () => {
+            await loadStage3Data();
+            showSuccess('✅ Learning pathways generated! Select your preferred pathway.');
+          }, 1000); // 1 second delay
         }
         
         // Handle stage transitions and polling logic
@@ -260,7 +274,9 @@ const CourseCreationPage = () => {
           }
         } else if (currentStageStatus === 'failed') {
           console.log('Generation failed:', response.data.error_message);
-          setError(response.data.error_message || 'Generation failed');
+          const errorMessage = response.data.error_message || 'Generation failed';
+          setError(errorMessage);
+          showError(`❌ ${errorMessage}`);
         }
       }
     } catch (error) {
@@ -269,22 +285,59 @@ const CourseCreationPage = () => {
   };
 
   // Add missing load functions
-  const loadStage1Data = async () => {
+  const loadStage1Data = async (retryCount = 0) => {
     try {
-      console.log('Loading stage 1 data...');
+      console.log(`Loading stage 1 data (attempt ${retryCount + 1})...`);
       const token = await getAccessTokenSilently();
+      
+      // Add timeout to the request
       const response = await axios.get(
         `${API_BASE_URL}/course-generation/${courseId}/stage1`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { 
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 30000 // 30 second timeout
+        }
       );
-      console.log('Stage 1 data loaded:', response.data);
+      console.log('Stage 1 data loaded successfully:', response.data);
       setStageData(prev => ({ ...prev, repo: response.data }));
     } catch (error) {
-      console.error('Failed to load stage 1 data:', error);
+      console.error(`Failed to load stage 1 data (attempt ${retryCount + 1}):`, error);
+      console.error('Error details:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      });
+      
+      // Handle different HTTP status codes appropriately
+      if (error.response?.status === 202) {
+        // Stage 1 is still in progress - retry with a longer delay (max 10 attempts)
+        if (retryCount < 10) {
+          const delay = Math.min((retryCount + 1) * 3000, 10000); // 3s, 6s, 9s, max 10s
+          console.log(`Stage 1 still in progress, retrying in ${delay}ms (attempt ${retryCount + 1}/10)`);
+          setTimeout(() => loadStage1Data(retryCount + 1), delay);
+        } else {
+          console.error('Maximum retries reached for stage 1 data loading');
+          showError(`❌ Stage 1 is taking too long. Please check the task status or try refreshing the page.`);
+        }
+      } else if (error.response?.status === 400) {
+        // Stage 1 failed - don't retry, show error
+        const errorMessage = error.response?.data?.detail || 'Repository analysis failed';
+        showError(`❌ ${errorMessage}`);
+      } else if (retryCount < 3) {
+        // Other errors - retry up to 3 times with increasing delays
+        const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
+        console.log(`Retrying stage 1 data load in ${delay}ms (attempt ${retryCount + 1}/3)`);
+        setTimeout(() => loadStage1Data(retryCount + 1), delay);
+      } else {
+        // Show error to user only after all retries failed
+        const errorMessage = error.response?.data?.detail || 'Failed to load repository analysis data';
+        showError(`❌ ${errorMessage}`);
+      }
     }
   };
 
-  const loadStage2Data = async () => {
+  const loadStage2Data = async (retryCount = 0) => {
     try {
       console.log('Loading stage 2 data...');
       const token = await getAccessTokenSilently();
@@ -296,10 +349,20 @@ const CourseCreationPage = () => {
       setStageData(prev => ({ ...prev, analysis: response.data }));
     } catch (error) {
       console.error('Failed to load stage 2 data:', error);
+      
+      // Retry up to 3 times with increasing delays
+      if (retryCount < 3) {
+        const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
+        console.log(`Retrying stage 2 data load in ${delay}ms (attempt ${retryCount + 1}/3)`);
+        setTimeout(() => loadStage2Data(retryCount + 1), delay);
+      } else {
+        const errorMessage = error.response?.data?.detail || 'Failed to load document analysis data';
+        showError(`❌ ${errorMessage}`);
+      }
     }
   };
 
-  const loadStage3Data = async () => {
+  const loadStage3Data = async (retryCount = 0) => {
     try {
       console.log('Loading stage 3 data...');
       const token = await getAccessTokenSilently();
@@ -311,10 +374,20 @@ const CourseCreationPage = () => {
       setStageData(prev => ({ ...prev, pathways: response.data }));
     } catch (error) {
       console.error('Failed to load stage 3 data:', error);
+      
+      // Retry up to 3 times with increasing delays
+      if (retryCount < 3) {
+        const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
+        console.log(`Retrying stage 3 data load in ${delay}ms (attempt ${retryCount + 1}/3)`);
+        setTimeout(() => loadStage3Data(retryCount + 1), delay);
+      } else {
+        const errorMessage = error.response?.data?.detail || 'Failed to load learning pathways data';
+        showError(`❌ ${errorMessage}`);
+      }
     }
   };
 
-  const loadStage4Data = async () => {
+  const loadStage4Data = async (retryCount = 0) => {
     try {
       console.log('Loading stage 4 data...');
       const token = await getAccessTokenSilently();
@@ -326,6 +399,16 @@ const CourseCreationPage = () => {
       setStageData(prev => ({ ...prev, generation: response.data }));
     } catch (error) {
       console.error('Failed to load stage 4 data:', error);
+      
+      // Retry up to 3 times with increasing delays
+      if (retryCount < 3) {
+        const delay = (retryCount + 1) * 2000; // 2s, 4s, 6s
+        console.log(`Retrying stage 4 data load in ${delay}ms (attempt ${retryCount + 1}/3)`);
+        setTimeout(() => loadStage4Data(retryCount + 1), delay);
+      } else {
+        const errorMessage = error.response?.data?.detail || 'Failed to load course generation data';
+        showError(`❌ ${errorMessage}`);
+      }
     }
   };
 
@@ -413,9 +496,11 @@ const CourseCreationPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      {/* Stage Trail Sidebar */}
-      <div className={`${isSidebarCollapsed ? 'w-16' : 'w-80'} transition-all duration-300 bg-white shadow-lg border-r border-gray-200 flex flex-col`}>
+    <>
+      <ToastContainer toasts={toasts} onRemoveToast={removeToast} />
+      <div className="min-h-screen bg-gray-50 flex">
+        {/* Stage Trail Sidebar */}
+        <div className={`${isSidebarCollapsed ? 'w-16' : 'w-80'} transition-all duration-300 bg-white shadow-lg border-r border-gray-200 flex flex-col`}>
         {/* Header */}
         <div className="p-4 border-b border-gray-200">
           <div className="flex items-center justify-between">
@@ -499,6 +584,7 @@ const CourseCreationPage = () => {
         </div>
       </div>
     </div>
+    </>
   );
 
   // Handler functions
@@ -515,9 +601,12 @@ const CourseCreationPage = () => {
       );
       
       setCurrentStage('repo');
+      showInfo('🚀 Started repository analysis! This may take a few minutes.');
       pollTaskStatus();
     } catch (error) {
-      setError(error.response?.data?.detail || 'Failed to start generation');
+      const errorMessage = error.response?.data?.detail || 'Failed to start generation';
+      setError(errorMessage);
+      showError(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -526,6 +615,12 @@ const CourseCreationPage = () => {
   async function handleStageNext(stageId, data) {
     setIsLoading(true);
     setError(null);
+    
+    const stageNames = {
+      'repo': 'Document Analysis',
+      'analysis': 'Learning Pathways',
+      'pathways': 'Course Generation'
+    };
     
     try {
       const token = await getAccessTokenSilently();
@@ -569,6 +664,7 @@ const CourseCreationPage = () => {
       };
       
       setCurrentStage(nextStageMap[stageId]);
+      showInfo(`🔄 Starting ${stageNames[stageId]}...`);
       pollTaskStatus();
       
     } catch (error) {
@@ -590,6 +686,7 @@ const CourseCreationPage = () => {
       }
       
       setError(errorMessage);
+      showError(errorMessage);
     } finally {
       setIsLoading(false);
     }
