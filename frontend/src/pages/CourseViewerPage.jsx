@@ -2,10 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth0 } from '@auth0/auth0-react';
 import axios from 'axios';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import EnhancedMarkdownRenderer from '../components/EnhancedMarkdownRenderer';
 
 const CourseViewerPage = () => {
   const { courseId } = useParams();
@@ -238,32 +235,7 @@ const CourseViewerPage = () => {
         {/* Main Content */}
         <div className="flex-1 bg-white">
           <div className="p-8 max-w-4xl mx-auto">
-            <div className="prose prose-lg max-w-none">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  code({ node, inline, className, children, ...props }) {
-                    const match = /language-(\w+)/.exec(className || '');
-                    return !inline && match ? (
-                      <SyntaxHighlighter
-                        style={vscDarkPlus}
-                        language={match[1]}
-                        PreTag="div"
-                        {...props}
-                      >
-                        {String(children).replace(/\n$/, '')}
-                      </SyntaxHighlighter>
-                    ) : (
-                      <code className={className} {...props}>
-                        {children}
-                      </code>
-                    );
-                  }
-                }}
-              >
-                {fileContent}
-              </ReactMarkdown>
-            </div>
+            <EnhancedMarkdownRenderer content={fileContent} />
             
             {/* Navigation Footer */}
             <div className="mt-12 pt-8 border-t border-gray-200 flex justify-between items-center">

@@ -1,10 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
 import axios from 'axios';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import EnhancedMarkdownRenderer from './EnhancedMarkdownRenderer';
 
 const CourseViewer = ({ courseId, onClose }) => {
   const { getAccessTokenSilently } = useAuth0();
@@ -218,82 +215,7 @@ const CourseViewer = ({ courseId, onClose }) => {
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto p-8">
               <div className="max-w-4xl mx-auto">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    code({ node, inline, className, children, ...props }) {
-                      const match = /language-(\w+)/.exec(className || '');
-                      return !inline && match ? (
-                        <SyntaxHighlighter
-                          style={vscDarkPlus}
-                          language={match[1]}
-                          PreTag="div"
-                          {...props}
-                        >
-                          {String(children).replace(/\n$/, '')}
-                        </SyntaxHighlighter>
-                      ) : (
-                        <code className="bg-gray-100 px-1 py-0.5 rounded text-sm" {...props}>
-                          {children}
-                        </code>
-                      );
-                    },
-                    h1: ({ children }) => (
-                      <h1 className="text-3xl font-bold text-gray-900 mb-6 pb-2 border-b border-gray-200">
-                        {children}
-                      </h1>
-                    ),
-                    h2: ({ children }) => (
-                      <h2 className="text-2xl font-semibold text-gray-900 mb-4 mt-8">
-                        {children}
-                      </h2>
-                    ),
-                    h3: ({ children }) => (
-                      <h3 className="text-xl font-semibold text-gray-900 mb-3 mt-6">
-                        {children}
-                      </h3>
-                    ),
-                    p: ({ children }) => (
-                      <p className="text-gray-700 mb-4 leading-relaxed">
-                        {children}
-                      </p>
-                    ),
-                    ul: ({ children }) => (
-                      <ul className="list-disc list-inside mb-4 space-y-2 text-gray-700">
-                        {children}
-                      </ul>
-                    ),
-                    ol: ({ children }) => (
-                      <ol className="list-decimal list-inside mb-4 space-y-2 text-gray-700">
-                        {children}
-                      </ol>
-                    ),
-                    blockquote: ({ children }) => (
-                      <blockquote className="border-l-4 border-blue-500 pl-4 italic text-gray-600 mb-4">
-                        {children}
-                      </blockquote>
-                    ),
-                    table: ({ children }) => (
-                      <div className="overflow-x-auto mb-4">
-                        <table className="min-w-full divide-y divide-gray-200">
-                          {children}
-                        </table>
-                      </div>
-                    ),
-                    th: ({ children }) => (
-                      <th className="px-6 py-3 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        {children}
-                      </th>
-                    ),
-                    td: ({ children }) => (
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {children}
-                      </td>
-                    ),
-                  }}
-                >
-                  {fileContent}
-                </ReactMarkdown>
+                <EnhancedMarkdownRenderer content={fileContent} />
               </div>
             </div>
 
