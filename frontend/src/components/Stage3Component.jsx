@@ -32,6 +32,9 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   
+  // Progress tracking state
+  const [progressData, setProgressData] = useState(null);
+  
   // Custom modal hook
   const {
     alertModal,
@@ -45,9 +48,57 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
   // Extract courseId from course object or URL params
   const courseId = course?.id || course?.course_id || course?.project_id || window.location.pathname.split('/').pop();
 
-  const isCompleted = taskStatus?.status === 'completed';
-  const isLoading = taskStatus?.status === 'running';
-  const isFailed = taskStatus?.status === 'failed';
+  // Better loading detection logic - check if Stage 3 specifically is running
+  const isCompleted = taskStatus?.stage_statuses?.PATHWAY_BUILDING === 'completed' || 
+                      taskStatus?.stage_statuses?.pathway_building === 'completed' ||
+                      taskStatus?.completed_stages?.includes('PATHWAY_BUILDING') ||
+                      taskStatus?.completed_stages?.includes('pathway_building');
+  
+  const isLoading = (taskStatus?.stage_statuses?.PATHWAY_BUILDING === 'running' || 
+                     taskStatus?.stage_statuses?.pathway_building === 'running' ||
+                     (taskStatus?.current_stage === 'PATHWAY_BUILDING' && taskStatus?.status === 'running') ||
+                     (taskStatus?.current_stage === 'pathway_building' && taskStatus?.status === 'running'));
+  
+  const isFailed = taskStatus?.stage_statuses?.PATHWAY_BUILDING === 'failed' || 
+                   taskStatus?.stage_statuses?.pathway_building === 'failed';
+
+  // Progress polling function
+  const fetchProgress = useCallback(async () => {
+    try {
+      console.log('Fetching Stage 3 progress for course:', courseId);
+      const token = await getAccessTokenSilently();
+      const response = await axios.get(`${API_BASE_URL}/course-generation/stage3/progress?course_id=${courseId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      console.log('Stage 3 progress data:', response.data);
+      setProgressData(response.data);
+    } catch (error) {
+      console.error('Error fetching Stage 3 progress:', error);
+      // Don't set error state here as it might just be that progress data isn't available yet
+    }
+  }, [courseId, getAccessTokenSilently]);
+
+  // Poll for progress when task is running
+  useEffect(() => {
+    console.log('Stage 3 isLoading changed:', isLoading, 'taskStatus:', taskStatus);
+    if (isLoading) {
+      console.log('Starting Stage 3 progress polling...');
+      // Start polling immediately
+      fetchProgress();
+      
+      // Poll every 2 seconds
+      const interval = setInterval(fetchProgress, 2000);
+      
+      return () => {
+        console.log('Stopping Stage 3 progress polling');
+        clearInterval(interval);
+      };
+    } else {
+      // Clear progress data when not loading
+      setProgressData(null);
+    }
+  }, [isLoading, fetchProgress]);
 
   // Load learning pathways and available documents when component mounts or when stage completes
   useEffect(() => {
@@ -285,10 +336,113 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Generating learning pathways...</p>
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">Generating Learning Pathways</h3>
+        <p className="text-gray-600 mb-4">
+          {progressData?.stage_description || 'Creating personalized learning paths for different complexity levels...'}
+        </p>
+        
+        {/* Enhanced Progress Display */}
+        <div className="max-w-2xl mx-auto space-y-4">
+          {/* Main Progress Bar */}
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="flex justify-between text-sm text-gray-600 mb-2">
+              <span>Overall Progress</span>
+              <span>{progressData ? Math.round((progressData.generated_pathways / progressData.total_pathways) * 100) : 0}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-3">
+              <div 
+                className="bg-blue-500 h-3 rounded-full transition-all duration-300"
+                style={{ width: `${progressData ? Math.round((progressData.generated_pathways / progressData.total_pathways) * 100) : 0}%` }}
+              />
+            </div>
+            
+            {/* Pathway Progress Details */}
+            {progressData && (
+              <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-blue-600">
+                    {progressData.generated_pathways || 0}
+                  </div>
+                  <div className="text-gray-600">Generated</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-gray-600">
+                    {progressData.total_pathways || 3}
+                  </div>
+                  <div className="text-gray-600">Total Pathways</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-green-600">
+                    {progressData.completed_complexities?.length || 0}
+                  </div>
+                  <div className="text-gray-600">Completed</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Current Complexity Being Processed */}
+          {progressData?.current_complexity && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse mr-3"></div>
+                <div className="flex-1">
+                  <div className="font-medium text-blue-900">Currently Processing:</div>
+                  <div className="text-sm font-semibold text-blue-700 capitalize">
+                    {progressData.current_complexity.toLowerCase()} Level Pathway
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Completed Complexities */}
+          {progressData?.completed_complexities && progressData.completed_complexities.length > 0 && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="font-medium text-green-900 mb-2">Completed Pathways:</div>
+              <div className="space-y-1">
+                {progressData.completed_complexities.map((complexity, index) => (
+                  <div key={index} className="flex items-center text-sm text-green-700">
+                    <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <span className="font-medium capitalize">{complexity.toLowerCase()} Level</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Processing Stage Description */}
+        <div className="mt-6 text-left max-w-md mx-auto">
+          <h4 className="font-medium text-gray-900 mb-3">Pathway Generation Process</h4>
+          <ul className="space-y-2 text-sm text-gray-600">
+            <li className="flex items-start">
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                progressData?.stage === 'initializing' ? 'bg-blue-500 animate-pulse' : 
+                progressData?.completed_complexities?.includes('BEGINNER') ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
+              <span>Generating beginner-friendly learning pathway</span>
+            </li>
+            <li className="flex items-start">
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                progressData?.current_complexity === 'INTERMEDIATE' ? 'bg-blue-500 animate-pulse' : 
+                progressData?.completed_complexities?.includes('INTERMEDIATE') ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
+              <span>Creating intermediate complexity pathway</span>
+            </li>
+            <li className="flex items-start">
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                progressData?.current_complexity === 'ADVANCED' ? 'bg-blue-500 animate-pulse' : 
+                progressData?.completed_complexities?.includes('ADVANCED') ? 'bg-green-500' : 
+                progressData?.stage === 'completed' ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
+              <span>Building advanced technical pathway</span>
+            </li>
+          </ul>
         </div>
       </div>
     );

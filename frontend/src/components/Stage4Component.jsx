@@ -1,6 +1,20 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth0 } from '@auth0/auth0-react';
+import axios from 'axios';
+import { toast } from 'react-toastify';
+import CourseViewer from './CourseViewer';
 
-const Stage4Component = ({ course, taskStatus, onComplete }) => {
+const Stage4Component = ({ course, taskStatus, stageData, onNext }) => {
+  console.log('🚀 Stage4Component rendering!', { course, taskStatus });
+  
+  const { getAccessTokenSilently } = useAuth0();
+  const [courseSummary, setCourseSummary] = useState(stageData);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [showCourseViewer, setShowCourseViewer] = useState(false);
+  
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+
   const [showCelebration, setShowCelebration] = useState(false);
   const [courseData, setCourseData] = useState(null);
 
@@ -15,17 +29,57 @@ const Stage4Component = ({ course, taskStatus, onComplete }) => {
   }, [isCompleted, showCelebration]);
 
   const handleComplete = () => {
-    onComplete();
+    if (onNext) {
+      onNext();
+    }
   };
 
-  const handleDownload = () => {
-    // In a real implementation, this would trigger a download
-    console.log('Download course content');
+  const handleDownload = async () => {
+    console.log('Download button clicked!', { 
+      courseId: course?.id, 
+      course: course 
+    });
+    try {
+      setLoading(true);
+      const token = await getAccessTokenSilently();
+      console.log('Got auth token, making download request...');
+      const response = await axios.get(
+        `${API_BASE_URL}/course-generation/${course?.id}/download`,
+        { 
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        }
+      );
+      
+      console.log('Download response received:', response.status);
+      
+      // Create download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `${course.name.replace(/[^a-zA-Z0-9]/g, '_')}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      toast.success('Course materials downloaded successfully!');
+    } catch (error) {
+      console.error('Error downloading course:', error);
+      toast.error('Failed to download course materials');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleViewCourse = () => {
-    // In a real implementation, this would navigate to the course viewer
-    console.log('View generated course');
+    console.log('View Course button clicked!', { 
+      courseId: course?.id, 
+      course: course,
+      showCourseViewer 
+    });
+    setShowCourseViewer(true);
+    console.log('showCourseViewer set to true');
   };
 
   if (isFailed) {
@@ -226,20 +280,38 @@ const Stage4Component = ({ course, taskStatus, onComplete }) => {
             <li>• Gather feedback from learners for future improvements</li>
           </ul>
         </div>
+
+        {/* Course Viewer Modal */}
+        {showCourseViewer && course?.id && (
+          <CourseViewer
+            courseId={course.id}
+            onClose={() => setShowCourseViewer(false)}
+          />
+        )}
       </div>
     );
   }
 
   return (
-    <div className="text-center py-8">
-      <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-        <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
+    <>
+      <div className="text-center py-8">
+        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="w-8 h-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-medium text-gray-900 mb-2">Waiting for Course Generation</h3>
+        <p className="text-gray-600">Course generation hasn't started yet.</p>
       </div>
-      <h3 className="text-lg font-medium text-gray-900 mb-2">Waiting for Course Generation</h3>
-      <p className="text-gray-600">Course generation hasn't started yet.</p>
-    </div>
+
+      {/* Course Viewer Modal */}
+      {showCourseViewer && course?.id && (
+        <CourseViewer
+          courseId={course.id}
+          onClose={() => setShowCourseViewer(false)}
+        />
+      )}
+    </>
   );
 };
 

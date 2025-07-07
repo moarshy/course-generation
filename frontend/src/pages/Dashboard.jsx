@@ -117,8 +117,8 @@ const Dashboard = () => {
   };
 
   const handleViewCourse = (courseId) => {
-    // TODO: Navigate to course detail page
-    console.log('View course:', courseId);
+    // Navigate to course creation page where completed course can be viewed
+    navigate(`/course/${courseId}/create`);
   };
 
   const handleEditCourse = (course) => {

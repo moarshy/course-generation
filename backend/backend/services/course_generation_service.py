@@ -12,6 +12,7 @@ from shared.models import (
     Stage2Input, Stage3Input, Stage4Input, PathwaySummary, CourseSummary, DocumentSummary,
     DocumentMetadataUpdate, ModuleUpdate, ModuleCreate, PathwayUpdate, ModuleSummary
 )
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,18 @@ class CourseGenerationService:
                 else:
                     progress += 12  # Current stage partially done
             
+            # Include task result data if available (especially course_summary for Stage 4)
+            task_result_data = {}
+            if celery_result.state == 'SUCCESS' and celery_result.result:
+                task_result = celery_result.result
+                if isinstance(task_result, dict) and task_result.get('success'):
+                    # Include course_summary from Stage 4
+                    if 'course_summary' in task_result:
+                        task_result_data['course_summary'] = task_result['course_summary']
+                    # Include any other useful result data
+                    if 'result' in task_result:
+                        task_result_data['result'] = task_result['result']
+
             return {
                 'task_id': task_info['task_id'],
                 'course_id': task_info['course_id'],
@@ -141,7 +154,8 @@ class CourseGenerationService:
                 'error_message': str(celery_result.info) if celery_result.state == 'FAILURE' else None,
                 'stage_statuses': stage_statuses,
                 'completed_stages': completed_stages,
-                'stage_completion_times': task_info.get('stage_completion_times', {})
+                'stage_completion_times': task_info.get('stage_completion_times', {}),
+                **task_result_data  # Include course_summary and other result data
             }
             
         except Exception as e:
@@ -680,6 +694,17 @@ class CourseGenerationService:
             
         except Exception as e:
             logger.error(f"Failed to cleanup generation data for course {course_id}: {e}")
+    
+    def get_course_export_path(self, user_id: str, course_id: str) -> Path:
+        """Get the path where course files are exported"""
+        from pathlib import Path
+        
+        # Sanitize user_id for filesystem
+        safe_user_id = user_id.replace('|', '_').replace('/', '_')
+        base_data_dir = Path("../data")
+        course_dir = base_data_dir / safe_user_id / course_id / "generated" / "default"
+        
+        return course_dir
     
     def _get_task_info(self, course_id: str) -> Optional[Dict[str, Any]]:
         """Get task info from Redis"""

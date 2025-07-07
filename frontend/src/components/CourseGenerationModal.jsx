@@ -210,7 +210,8 @@ const CourseGenerationModal = ({ isOpen, onClose, course }) => {
           <Stage4Component
             course={course}
             taskStatus={taskStatus}
-            onComplete={() => {
+            stageData={stageData.stage4}
+            onNext={() => {
               setCurrentStage('completed');
               onClose();
             }}

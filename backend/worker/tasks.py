@@ -296,6 +296,10 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
     try:
         logger.info(f"Starting Stage 3 for course {course_id}: pathway building")
         
+        # Initialize Redis progress tracking
+        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        progress_key = f"stage3_progress:{course_id}"
+        
         # Get stage manager
         stage_manager = get_stage_manager(user_id, course_id)
         
@@ -312,9 +316,103 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
                 with open(overview_path, 'r', encoding='utf-8') as f:
                     overview_context = get_n_words(f.read(), OVERVIEW_DOC_MAX_WORDS)
         
-        # Generate learning pathways
+        # Initialize progress data
+        complexities = [ComplexityLevel.BEGINNER, ComplexityLevel.INTERMEDIATE, ComplexityLevel.ADVANCED]
+        complexity_names = [c.value.upper() for c in complexities]
+        
+        progress_data = {
+            'stage': 'initializing',
+            'stage_description': 'Preparing to generate learning pathways',
+            'total_pathways': len(complexities),
+            'generated_pathways': 0,
+            'current_complexity': '',
+            'completed_complexities': [],
+            'updated_at': datetime.now().isoformat()
+        }
+        redis_client.set(progress_key, json.dumps(progress_data))
+        
+        # Update progress: starting pathway generation
+        progress_data.update({
+            'stage': 'generating_pathways',
+            'stage_description': 'Generating learning pathways for different complexity levels',
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
+        
+        # Generate learning pathways with progress updates
         path_generator = LearningPathGenerator()
-        learning_paths = path_generator.generate_grouped_paths(document_tree, overview_context)
+        learning_paths = []
+        
+        # Get all documents (no complexity filtering - let LLM decide)
+        all_documents = list(document_tree.nodes.values())
+        
+        if not all_documents:
+            logger.warning("No documents found for learning path generation")
+            # Update progress with error
+            progress_data.update({
+                'stage': 'failed',
+                'stage_description': 'No documents found for pathway generation',
+                'error': 'No documents available',
+                'updated_at': datetime.now().isoformat()
+            })
+            redis_client.set(progress_key, json.dumps(progress_data))
+            return {
+                'success': False,
+                'stage': CourseGenerationStage.PATHWAY_BUILDING.value,
+                'error': 'No documents found for learning path generation'
+            }
+        
+        logger.info(f"Generating learning paths for {len(all_documents)} documents")
+        
+        for i, complexity in enumerate(complexities):
+            complexity_name = complexity.value.upper()
+            
+            # Update current complexity being processed
+            progress_data.update({
+                'current_complexity': complexity_name,
+                'generated_pathways': i,
+                'updated_at': datetime.now().isoformat()
+            })
+            redis_client.set(progress_key, json.dumps(progress_data))
+            
+            try:
+                logger.info(f"Generating {complexity_name} complexity pathway...")
+                
+                # Generate learning path for this complexity level using the forward method directly
+                grouped_path = path_generator.forward(
+                    documents=all_documents,
+                    complexity=complexity,
+                    repo_name=document_tree.repo_name or "Documentation",
+                    overview_context=overview_context
+                )
+                
+                if grouped_path:
+                    learning_paths.append(grouped_path)
+                    logger.info(f"Generated {complexity_name} pathway with {len(grouped_path.modules)} modules")
+                else:
+                    logger.warning(f"No pathway generated for {complexity_name} level")
+                
+                # Mark as completed
+                progress_data['completed_complexities'].append(complexity_name)
+                progress_data.update({
+                    'generated_pathways': i + 1,
+                    'updated_at': datetime.now().isoformat()
+                })
+                redis_client.set(progress_key, json.dumps(progress_data))
+                
+            except Exception as e:
+                logger.error(f"Error generating learning path for {complexity_name}: {e}")
+                # Continue with other complexity levels
+                continue
+        
+        # Mark as completed
+        progress_data.update({
+            'stage': 'completed',
+            'stage_description': 'Learning pathways generated successfully',
+            'current_complexity': '',
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
         
         # Create stage 3 result
         stage3_result = Stage3Result(
@@ -352,6 +450,9 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
                 'modules': [{'title': m.title, 'theme': m.theme, 'description': m.description} for m in path.modules]
             })
         
+        # Clean up progress data after completion
+        redis_client.delete(progress_key)
+        
         logger.info(f"Stage 3 completed for course {course_id}")
         return {
             'success': True,
@@ -363,6 +464,21 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
         
     except Exception as e:
         logger.error(f"Stage 3 failed for course {course_id}: {str(e)}")
+        
+        # Update progress with error
+        try:
+            redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+            progress_key = f"stage3_progress:{course_id}"
+            progress_data = {
+                'stage': 'failed',
+                'stage_description': f'Pathway generation failed: {str(e)}',
+                'error': str(e),
+                'updated_at': datetime.now().isoformat()
+            }
+            redis_client.set(progress_key, json.dumps(progress_data))
+        except:
+            pass  # Don't let Redis errors mask the original error
+        
         return {
             'success': False,
             'stage': CourseGenerationStage.PATHWAY_BUILDING.value,

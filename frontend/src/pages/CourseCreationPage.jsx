@@ -480,6 +480,7 @@ const CourseCreationPage = () => {
             status={getStageStatus('generation')}
             taskStatus={taskStatus}
             course={course}
+            courseId={courseId}
           />
         );
       default:

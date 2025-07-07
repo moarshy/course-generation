@@ -1,6 +1,8 @@
 import logging
 from fastapi import APIRouter, HTTPException, Depends, status, Query
 from typing import Optional
+import redis
+import json
 from shared.models import (
     CourseGenerationRequest, GenerationTaskStatus,
     Stage1Response, Stage1Input, Stage2Response, Stage2Input, Stage3Input, Stage3Response,
@@ -717,4 +719,163 @@ async def get_stage2_progress(course_id: str = Query(..., description="Course ID
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve progress: {str(e)}"
-        ) 
+        )
+
+@router.get("/stage3/progress")
+async def get_stage3_progress(course_id: str = Query(..., description="Course ID")):
+    """Get detailed progress for Stage 3 pathway building"""
+    try:
+        # Get progress data through service layer (more robust)
+        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        progress_key = f"stage3_progress:{course_id}"
+        
+        logger.info(f"Fetching Stage 3 progress for course: {course_id}")
+        
+        progress_data_str = redis_client.get(progress_key)
+        if not progress_data_str:
+            logger.info(f"No Redis progress data found for course {course_id}, checking task status")
+            # No detailed progress found - check if task is running
+            task_status = generation_service.get_task_status(course_id)
+            if task_status and (task_status.get('current_stage') == 'PATHWAY_BUILDING' or 
+                               task_status.get('stage_statuses', {}).get('PATHWAY_BUILDING') == 'running'):
+                logger.info(f"Stage 3 is running for course {course_id}, returning initializing state")
+                # Task is running but no detailed progress yet
+                return {
+                    "stage": "initializing", 
+                    "stage_description": "Initializing pathway generation...",
+                    "total_pathways": 3,
+                    "generated_pathways": 0,
+                    "current_complexity": "",
+                    "completed_complexities": []
+                }
+            else:
+                logger.warning(f"No progress information available for course {course_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No progress information available"
+                )
+        
+        # Parse JSON with better error handling
+        try:
+            progress_data = json.loads(progress_data_str)
+            logger.info(f"Successfully parsed progress data for course {course_id}: {progress_data}")
+            return progress_data
+        except json.JSONDecodeError as json_err:
+            logger.error(f"Failed to parse JSON progress data for course {course_id}: {json_err}")
+            logger.error(f"Raw data: {progress_data_str}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Invalid progress data format"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get Stage 3 progress for course {course_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve progress: {str(e)}"
+        )
+
+@router.get("/{course_id}/course-content")
+async def get_course_content(
+    course_id: str, 
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get the complete course structure and metadata"""
+    try:
+        # Verify course ownership
+        if not course_service.verify_course_ownership(course_id, user_id):
+            raise HTTPException(status_code=404, detail="Course not found")
+        
+        course_path = generation_service.get_course_export_path(user_id, course_id)
+        course_info_path = course_path / "course_info.json"
+        
+        if not course_info_path.exists():
+            raise HTTPException(status_code=404, detail="Course content not found")
+        
+        with open(course_info_path, 'r', encoding='utf-8') as f:
+            course_info = json.load(f)
+        
+        return course_info
+        
+    except Exception as e:
+        logger.error(f"Error getting course content for {course_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get course content")
+
+
+@router.get("/{course_id}/course-content/{module_id}/{file_name}")
+async def get_course_file_content(
+    course_id: str,
+    module_id: str, 
+    file_name: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Get the content of a specific course file"""
+    try:
+        # Verify course ownership
+        if not course_service.verify_course_ownership(course_id, user_id):
+            raise HTTPException(status_code=404, detail="Course not found")
+        
+        course_path = generation_service.get_course_export_path(user_id, course_id)
+        file_path = course_path / module_id / file_name
+        
+        if not file_path.exists():
+            # Also check in root directory for welcome/conclusion files
+            file_path = course_path / file_name
+            if not file_path.exists():
+                raise HTTPException(status_code=404, detail="File not found")
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        return {"content": content}
+        
+    except Exception as e:
+        logger.error(f"Error getting file content for {course_id}/{module_id}/{file_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get file content")
+
+
+@router.get("/{course_id}/download")
+async def download_course(
+    course_id: str,
+    user_id: str = Depends(get_current_user_id)
+):
+    """Download the complete course as a zip file"""
+    try:
+        # Verify course ownership
+        if not course_service.verify_course_ownership(course_id, user_id):
+            raise HTTPException(status_code=404, detail="Course not found")
+        
+        course_path = generation_service.get_course_export_path(user_id, course_id)
+        
+        if not course_path.exists():
+            raise HTTPException(status_code=404, detail="Course content not found")
+        
+        # Create a zip file in memory
+        import zipfile
+        from io import BytesIO
+        
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add all files from the course directory
+            for file_path in course_path.rglob('*'):
+                if file_path.is_file():
+                    # Create relative path for the zip file
+                    relative_path = file_path.relative_to(course_path)
+                    zip_file.write(file_path, relative_path)
+        
+        zip_buffer.seek(0)
+        
+        from fastapi.responses import StreamingResponse
+        
+        return StreamingResponse(
+            iter([zip_buffer.read()]),
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=course_{course_id}.zip"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading course {course_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to download course") 

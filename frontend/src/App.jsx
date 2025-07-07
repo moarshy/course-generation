@@ -4,6 +4,7 @@ import { useAuth0 } from '@auth0/auth0-react';
 import axios from 'axios';
 import Dashboard from './pages/Dashboard';
 import CourseCreationPage from './pages/CourseCreationPage';
+import CourseViewerPage from './pages/CourseViewerPage';
 import './App.css';
 
 // Navigation component that can use useNavigate
@@ -165,6 +166,7 @@ function App() {
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/course/:courseId/create" element={<CourseCreationPage />} />
+            <Route path="/course/:courseId/view" element={<CourseViewerPage />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </div>

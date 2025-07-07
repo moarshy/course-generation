@@ -1,4 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth0 } from '@auth0/auth0-react';
+import axios from 'axios';
 import Stage2Component from './Stage2Component';
 import Stage3Component from './Stage3Component';
 
@@ -192,9 +195,53 @@ export const Stage3Content = ({ status, taskStatus, stageData, course, onNext, i
 };
 
 // Stage 4: Course Generation Content
-export const Stage4Content = ({ status, taskStatus, course }) => {
+export const Stage4Content = ({ status, taskStatus, course, courseId }) => {
+  const navigate = useNavigate();
+  const { getAccessTokenSilently } = useAuth0();
+  const [loading, setLoading] = useState(false);
+  
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+  
   const isCompleted = status === 'completed';
   const isActive = status === 'active';
+
+  const handleViewCourse = () => {
+    console.log('🔥 View Course clicked! Navigating to:', `/course/${courseId}/view`);
+    navigate(`/course/${courseId}/view`);
+  };
+
+  const handleDownload = async () => {
+    console.log('🔥 Download clicked!', { courseId, course });
+    try {
+      setLoading(true);
+      const token = await getAccessTokenSilently();
+      const response = await axios.get(
+        `${API_BASE_URL}/course-generation/${courseId}/download`,
+        { 
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: 'blob'
+        }
+      );
+      
+      // Create download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `${course?.title?.replace(/[^a-zA-Z0-9]/g, '_') || 'course'}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      // Using alert instead of toast since toast might not be available
+      alert('Course materials downloaded successfully!');
+    } catch (error) {
+      console.error('Error downloading course:', error);
+      alert('Failed to download course materials');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (isActive && taskStatus?.status === 'running') {
     return (
@@ -244,10 +291,19 @@ export const Stage4Content = ({ status, taskStatus, course }) => {
     );
   }
 
+  console.log('🚀 Stage4Content rendering:', { 
+    status, 
+    isCompleted, 
+    isActive, 
+    taskStatus: taskStatus?.status,
+    courseId
+  });
+
   if (isCompleted) {
     // Check if course generation actually succeeded with modules
     const moduleCount = taskStatus?.course_summary?.module_count || 0;
     const hasGeneratedContent = moduleCount > 0;
+    console.log('✅ Stage4Content completed state:', { moduleCount, hasGeneratedContent });
     
     if (hasGeneratedContent) {
       // Show success message only if modules were actually generated
@@ -284,11 +340,18 @@ export const Stage4Content = ({ status, taskStatus, course }) => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <button className="bg-blue-500 text-white py-3 px-6 rounded-lg font-medium hover:bg-blue-600 transition-colors duration-200">
+            <button 
+              onClick={handleViewCourse}
+              className="bg-blue-500 text-white py-3 px-6 rounded-lg font-medium hover:bg-blue-600 transition-colors duration-200"
+            >
               👁️ View Course
             </button>
-            <button className="bg-green-500 text-white py-3 px-6 rounded-lg font-medium hover:bg-green-600 transition-colors duration-200">
-              📥 Download Materials
+            <button 
+              onClick={handleDownload}
+              disabled={loading}
+              className="bg-green-500 text-white py-3 px-6 rounded-lg font-medium hover:bg-green-600 transition-colors duration-200 disabled:opacity-50"
+            >
+              📥 {loading ? 'Downloading...' : 'Download Materials'}
             </button>
           </div>
 
@@ -300,6 +363,8 @@ export const Stage4Content = ({ status, taskStatus, course }) => {
               <li>• Deploy to your learning platform</li>
             </ul>
           </div>
+
+
         </div>
       );
     } else {
