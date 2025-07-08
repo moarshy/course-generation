@@ -63,7 +63,6 @@ const CourseCreationPage = () => {
       );
 
       if (response.data) {
-        console.log('Found existing generation:', response.data);
         setTaskStatus(response.data);
         updateStageProgress(response.data);
         
@@ -80,26 +79,30 @@ const CourseCreationPage = () => {
         };
         
         if (isStageCompleted('CLONE_REPO') && !stageData.repo) {
-          console.log('Loading stage 1 data...');
           setTimeout(() => loadStage1Data(), 500); // Small delay for initial load
         }
         if (isStageCompleted('DOCUMENT_ANALYSIS') && !stageData.analysis) {
-          console.log('Loading stage 2 data...');
           setTimeout(() => loadStage2Data(), 500); // Small delay for initial load
         }
         if (isStageCompleted('PATHWAY_BUILDING') && !stageData.pathways) {
-          console.log('Loading stage 3 data...');
           setTimeout(() => loadStage3Data(), 500); // Small delay for initial load
         }
         
         // If a stage is running, start polling
         if (response.data.status === 'running') {
-          console.log('Starting polling for running stage...');
           pollTaskStatus();
         }
+      } else {
+        // For new courses with no existing generation, set initial state
+        setCurrentStage('repo');
+        setCompletedStages(new Set());
+        setTaskStatus(null);
       }
     } catch (error) {
-      console.log('No existing generation found');
+      // For new courses with no existing generation, set initial state
+      setCurrentStage('repo');
+      setCompletedStages(new Set());
+      setTaskStatus(null);
     }
   };
 
@@ -130,13 +133,10 @@ const CourseCreationPage = () => {
       // Process each stage status
       Object.entries(taskStatusData.stage_statuses).forEach(([stage, status]) => {
         const mappedStage = stageMap[stage];
-        console.log(`Processing stage: ${stage} -> ${mappedStage} (status: ${status})`);
         if (mappedStage) {
           if (status === 'completed') {
-            console.log(`Marking ${mappedStage} as completed`);
             newCompletedStages.add(mappedStage);
           } else if (status === 'running' || status === 'failed') {
-            console.log(`Setting ${mappedStage} as active stage`);
             activeStage = mappedStage;
           }
         }
@@ -174,7 +174,6 @@ const CourseCreationPage = () => {
           }
         }
         
-        console.log(`Setting stage to: ${targetStage} based on completed stages:`, Array.from(newCompletedStages));
         setCurrentStage(targetStage);
         // Otherwise, keep the current stage unchanged
       }
@@ -212,7 +211,6 @@ const CourseCreationPage = () => {
 
   const pollTaskStatus = async () => {
     try {
-      console.log('Polling task status...');
       const token = await getAccessTokenSilently();
       const response = await axios.get(
         `${API_BASE_URL}/course-generation/${courseId}/status`,
@@ -220,7 +218,6 @@ const CourseCreationPage = () => {
       );
       
       if (response.data) {
-        console.log('Poll result:', response.data);
         setTaskStatus(response.data);
         updateStageProgress(response.data);
         
@@ -238,23 +235,18 @@ const CourseCreationPage = () => {
         
         // Load data for newly completed stages (with small delay to ensure files are written)
         if (isStageCompleted('CLONE_REPO') && !stageData.repo) {
-          console.log('Stage 1 completed, loading data...');
           setTimeout(async () => {
             await loadStage1Data();
             showSuccess('✅ Repository analysis completed! Ready to select folders.');
           }, 1000); // 1 second delay
-        } else if (isStageCompleted('CLONE_REPO') && stageData.repo) {
-          console.log('Stage 1 completed, data already loaded:', stageData.repo);
         }
         if (isStageCompleted('DOCUMENT_ANALYSIS') && !stageData.analysis) {
-          console.log('Stage 2 completed, loading data...');
           setTimeout(async () => {
             await loadStage2Data();
             showSuccess('✅ Document analysis completed! Review the results.');
           }, 1000); // 1 second delay
         }
         if (isStageCompleted('PATHWAY_BUILDING') && !stageData.pathways) {
-          console.log('Stage 3 completed, loading data...');
           setTimeout(async () => {
             await loadStage3Data();
             showSuccess('✅ Learning pathways generated! Select your preferred pathway.');
@@ -263,22 +255,17 @@ const CourseCreationPage = () => {
         
         // Handle stage transitions and polling logic
         const currentStageStatus = response.data.status;
-        console.log('Current stage status:', currentStageStatus, 'Stage statuses:', stageStatuses);
         
         if (currentStageStatus === 'running' || currentStageStatus === 'pending') {
-          console.log('Task is running, continuing polling...');
           setTimeout(pollTaskStatus, 2000);
         } else if (currentStageStatus === 'completed') {
           // Check if any individual stage is still running
           const hasRunningStage = Object.values(stageStatuses).includes('running');
           if (hasRunningStage) {
-            console.log('A stage is still running, continuing polling...');
             setTimeout(pollTaskStatus, 2000);
           } else {
-            console.log('All stages completed');
             // Check if we need to load final stage data
             if (isStageCompleted('COURSE_GENERATION') && !stageData.generation) {
-              console.log('Stage 4 completed, loading data...');
               await loadStage4Data();
             }
           }

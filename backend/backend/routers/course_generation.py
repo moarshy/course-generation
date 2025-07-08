@@ -777,6 +777,64 @@ async def get_stage3_progress(course_id: str = Query(..., description="Course ID
             detail=f"Failed to retrieve progress: {str(e)}"
         )
 
+@router.get("/stage4/progress")
+async def get_stage4_progress(course_id: str = Query(..., description="Course ID")):
+    """Get detailed progress for Stage 4 course generation"""
+    try:
+        # Get progress data through Redis directly (like stage3)
+        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        progress_key = f"stage4_progress:{course_id}"
+        
+        logger.info(f"Fetching Stage 4 progress for course: {course_id}")
+        
+        progress_data_str = redis_client.get(progress_key)
+        if not progress_data_str:
+            logger.info(f"No Redis progress data found for course {course_id}, checking task status")
+            # No detailed progress found - check if task is running
+            task_status = generation_service.get_task_status(course_id)
+            if task_status and (task_status.get('current_stage') == 'COURSE_GENERATION' or 
+                               task_status.get('stage_statuses', {}).get('COURSE_GENERATION') == 'running'):
+                logger.info(f"Stage 4 is running for course {course_id}, returning initializing state")
+                # Task is running but no detailed progress yet
+                return {
+                    "stage": "initializing",
+                    "stage_description": "Initializing course generation...",
+                    "total_modules": 0,
+                    "generated_modules": 0,
+                    "current_module": "",
+                    "completed_modules": [],
+                    "current_step": "loading_data",
+                    "step_progress": 0
+                }
+            else:
+                logger.warning(f"No progress information available for course {course_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No progress information available"
+                )
+        
+        # Parse JSON with better error handling
+        try:
+            progress_data = json.loads(progress_data_str)
+            logger.info(f"Successfully parsed progress data for course {course_id}: {progress_data}")
+            return progress_data
+        except json.JSONDecodeError as json_err:
+            logger.error(f"Failed to parse JSON progress data for course {course_id}: {json_err}")
+            logger.error(f"Raw data: {progress_data_str}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Invalid progress data format"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get Stage 4 progress for course {course_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve progress: {str(e)}"
+        )
+
 @router.get("/{course_id}/course-content")
 async def get_course_content(
     course_id: str, 

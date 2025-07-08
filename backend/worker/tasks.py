@@ -485,12 +485,107 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
             'error': str(e)
         }
 
+def generate_course_with_progress(course_generator, pathway, document_tree, overview_context, 
+                                 progress_key, redis_client, progress_data):
+    """Generate course content with detailed progress tracking"""
+    from worker.course_content_agent.modules import CourseGenerator, ModuleContent, GeneratedCourse
+    from concurrent.futures import ThreadPoolExecutor
+    import json
+    from datetime import datetime
+    
+    logger.info(f"Generating course content for {pathway.title}")
+    
+    # Update total modules count
+    total_modules = len(pathway.modules)
+    progress_data.update({
+        'total_modules': total_modules,
+        'current_step': 'generating_modules',
+        'step_progress': 55,
+        'updated_at': datetime.now().isoformat()
+    })
+    redis_client.set(progress_key, json.dumps(progress_data))
+    
+    # Generate modules with progress tracking
+    module_contents = []
+    
+    for i, module in enumerate(pathway.modules):
+        # Update current module being processed
+        progress_data.update({
+            'current_module': module.title,
+            'generated_modules': i,
+            'step_progress': 55 + int((i / total_modules) * 25),  # 55-80% for module generation
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
+        
+        logger.info(f"-> Generating content for module: {module.title}")
+        
+        # Generate module content (this calls the original method)
+        module_content = course_generator._generate_module_content(
+            module, pathway, document_tree, overview_context, i
+        )
+        module_contents.append(module_content)
+        
+        # Mark module as completed
+        progress_data['completed_modules'].append(module.title)
+        progress_data.update({
+            'generated_modules': i + 1,
+            'step_progress': 55 + int(((i + 1) / total_modules) * 25),
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
+        
+        logger.info(f"✓ Completed module: {module.title}")
+    
+    # Update progress: generating course conclusion
+    progress_data.update({
+        'current_module': '',
+        'current_step': 'generating_conclusion',
+        'step_progress': 80,
+        'updated_at': datetime.now().isoformat()
+    })
+    redis_client.set(progress_key, json.dumps(progress_data))
+    
+    # Generate course conclusion
+    course_conclusion = course_generator._generate_course_conclusion(pathway)
+    
+    # Create complete course
+    course = GeneratedCourse(
+        course_id=pathway.pathway_id,
+        title=pathway.title,
+        description=pathway.description,
+        welcome_message=pathway.welcome_message,
+        modules=module_contents,
+        course_conclusion=course_conclusion
+    )
+    
+    logger.info(f"Generated complete course with {len(module_contents)} modules")
+    return course
+
 @app.task(bind=True)
 def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dict[str, Any]) -> Dict[str, Any]:
     """Stage 4: Generate final course content"""
     try:
         logger.info(f"Starting Stage 4 for course {course_id}: course generation")
         logger.info(f"Stage 4 user_input: {user_input}")
+        
+        # Initialize Redis progress tracking
+        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        progress_key = f"stage4_progress:{course_id}"
+        
+        # Initialize progress data
+        progress_data = {
+            'stage': 'initializing',
+            'stage_description': 'Setting up course generation...',
+            'total_modules': 0,
+            'generated_modules': 0,
+            'current_module': '',
+            'completed_modules': [],
+            'current_step': 'loading_data',
+            'step_progress': 0,
+            'updated_at': datetime.now().isoformat()
+        }
+        redis_client.set(progress_key, json.dumps(progress_data))
         
         # Parse user input
         stage4_input = Stage4UserInput(**user_input)
@@ -499,6 +594,15 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         # Get stage manager
         stage_manager = get_stage_manager(user_id, course_id)
         logger.info(f"Stage manager created for user {user_id}, course {course_id}")
+        
+        # Update progress: loading data
+        progress_data.update({
+            'stage': 'loading_data',
+            'stage_description': 'Loading previous stage data...',
+            'step_progress': 10,
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
         
         # Load previous stage data with debugging
         logger.info("Loading Stage 3 data...")
@@ -514,11 +618,25 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
                 raise ValueError("Stage 3 data is None - pathway building data not found")
         logger.info(f"Stage 3 data keys: {list(stage3_data.keys()) if isinstance(stage3_data, dict) else type(stage3_data)}")
         
+        # Update progress: stage 3 data loaded
+        progress_data.update({
+            'step_progress': 20,
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
+        
         logger.info("Loading Document Tree...")
         document_tree: DocumentTree = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS)
         logger.info(f"Document tree loaded: {document_tree is not None}")
         if document_tree is None:
             raise ValueError("Document tree is None - document analysis data not found")
+        
+        # Update progress: document tree loaded
+        progress_data.update({
+            'step_progress': 30,
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
         
         logger.info("Loading Stage 2 result...")
         stage2_result = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS, suffix="result")
@@ -544,6 +662,13 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         logger.info(f"Selected pathway: {selected_pathway is not None}")
         if not selected_pathway:
             raise ValueError("No pathway available for course generation")
+        
+        # Update progress: pathway selected, now we know total modules
+        progress_data.update({
+            'step_progress': 40,
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
         
         # Debug the selected pathway
         logger.info(f"Selected pathway type: {type(selected_pathway)}")
@@ -618,16 +743,43 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         else:
             logger.info("No overview document specified")
         
+        # Update progress: preparing for course generation
+        progress_data.update({
+            'stage': 'generating_course',
+            'stage_description': 'Generating course content with AI...',
+            'total_modules': len(selected_pathway.modules) if hasattr(selected_pathway, 'modules') else 0,
+            'current_step': 'preparing_generation',
+            'step_progress': 50,
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
+        
         # Generate course
         logger.info("Generating course...")
         course_generator = CourseGenerator()
         logger.info(f"Course generator created: {course_generator is not None}")
         
         logger.info(f"Calling generate_course with pathway: {selected_pathway.title if hasattr(selected_pathway, 'title') else 'No title'}")
-        generated_course = course_generator.generate_course(selected_pathway, document_tree, overview_context)
+        
+        # Create a custom course generator that can track progress
+        generated_course = generate_course_with_progress(
+            course_generator, selected_pathway, document_tree, overview_context, 
+            progress_key, redis_client, progress_data
+        )
+        
         logger.info(f"Course generated: {generated_course is not None}")
         if generated_course is None:
             raise ValueError("Course generation failed - generated_course is None")
+        
+        # Update progress: exporting course
+        progress_data.update({
+            'stage': 'exporting',
+            'stage_description': 'Exporting course to markdown files...',
+            'current_step': 'exporting',
+            'step_progress': 85,
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
         
         # Export course to markdown
         logger.info("Exporting course to markdown...")
@@ -667,7 +819,21 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
             CourseGenerationStage.COURSE_GENERATION, stage4_result
         )
         
+        # Final progress update
+        progress_data.update({
+            'stage': 'completed',
+            'stage_description': 'Course generation completed successfully',
+            'current_step': 'completed',
+            'step_progress': 100,
+            'updated_at': datetime.now().isoformat()
+        })
+        redis_client.set(progress_key, json.dumps(progress_data))
+        
         logger.info(f"Stage 4 completed for course {course_id}")
+        
+        # Clean up progress data after completion
+        redis_client.delete(progress_key)
+        
         return {
             'success': True,
             'stage': CourseGenerationStage.COURSE_GENERATION.value,
@@ -684,6 +850,21 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         import traceback
         logger.error(f"Stage 4 failed for course {course_id}: {str(e)}")
         logger.error(f"Stack trace: {traceback.format_exc()}")
+        
+        # Update progress with error
+        try:
+            redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+            progress_key = f"stage4_progress:{course_id}"
+            progress_data = {
+                'stage': 'failed',
+                'stage_description': f'Course generation failed: {str(e)}',
+                'error': str(e),
+                'updated_at': datetime.now().isoformat()
+            }
+            redis_client.set(progress_key, json.dumps(progress_data))
+        except:
+            pass  # Don't let Redis errors mask the original error
+        
         return {
             'success': False,
             'stage': CourseGenerationStage.COURSE_GENERATION.value,

@@ -17,6 +17,12 @@ const Stage4Component = ({ course, taskStatus, stageData, onNext }) => {
 
   const [showCelebration, setShowCelebration] = useState(false);
   const [courseData, setCourseData] = useState(null);
+  
+  // Progress tracking state
+  const [detailedProgress, setDetailedProgress] = useState(null);
+
+  // Extract courseId from course object
+  const courseId = course?.id || course?.course_id || course?.project_id;
 
   const isCompleted = taskStatus?.status === 'completed';
   const isLoading = taskStatus?.status === 'running';
@@ -27,6 +33,46 @@ const Stage4Component = ({ course, taskStatus, stageData, onNext }) => {
       setTimeout(() => setShowCelebration(true), 500);
     }
   }, [isCompleted, showCelebration]);
+
+  // Load detailed progress when stage 4 is running
+  useEffect(() => {
+    let progressInterval;
+    
+    if (isLoading && courseId) {
+      // Poll for detailed progress every 2 seconds
+      const fetchProgress = async () => {
+        try {
+          const token = await getAccessTokenSilently();
+          const response = await axios.get(
+            `${API_BASE_URL}/course-generation/stage4/progress`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              params: { course_id: courseId }
+            }
+          );
+          setDetailedProgress(response.data);
+        } catch (error) {
+          console.error('Error fetching detailed progress:', error);
+          // Don't set detailed progress on error to avoid clearing existing data
+        }
+      };
+      
+      // Fetch immediately
+      fetchProgress();
+      
+      // Set up polling
+      progressInterval = setInterval(fetchProgress, 2000);
+    } else {
+      // Clear detailed progress when not loading
+      setDetailedProgress(null);
+    }
+    
+    return () => {
+      if (progressInterval) {
+        clearInterval(progressInterval);
+      }
+    };
+  }, [isLoading, courseId, getAccessTokenSilently]);
 
   const handleComplete = () => {
     if (onNext) {
@@ -110,43 +156,115 @@ const Stage4Component = ({ course, taskStatus, stageData, onNext }) => {
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
         <h3 className="text-lg font-medium text-gray-900 mb-2">Generating Course Content</h3>
         <p className="text-gray-600 mb-4">
-          Creating comprehensive course materials from your selected pathway...
+          {detailedProgress?.stage_description || 'Creating comprehensive course materials from your selected pathway...'}
         </p>
         
-        <div className="max-w-md mx-auto">
-          <div className="flex justify-between text-sm text-gray-600 mb-2">
-            <span>Progress</span>
-            <span>{taskStatus?.progress_percentage || 0}%</span>
+        {/* Enhanced Progress Display */}
+        <div className="max-w-2xl mx-auto space-y-4">
+          {/* Main Progress Bar */}
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="flex justify-between text-sm text-gray-600 mb-2">
+              <span>Overall Progress</span>
+              <span>{detailedProgress?.step_progress || taskStatus?.progress_percentage || 0}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-3">
+              <div 
+                className="bg-blue-500 h-3 rounded-full transition-all duration-300"
+                style={{ width: `${detailedProgress?.step_progress || taskStatus?.progress_percentage || 0}%` }}
+              />
+            </div>
+            
+            {/* Module Progress Details */}
+            {detailedProgress && detailedProgress.total_modules > 0 && (
+              <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-blue-600">
+                    {detailedProgress.generated_modules || 0}
+                  </div>
+                  <div className="text-gray-600">Generated</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-gray-600">
+                    {detailedProgress.total_modules || 0}
+                  </div>
+                  <div className="text-gray-600">Total Modules</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-lg font-semibold text-green-600">
+                    {detailedProgress.completed_modules?.length || 0}
+                  </div>
+                  <div className="text-gray-600">Completed</div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${taskStatus?.progress_percentage || 0}%` }}
-            />
-          </div>
+
+          {/* Current Module Being Generated */}
+          {detailedProgress?.current_module && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse mr-3"></div>
+                <div className="flex-1">
+                  <div className="font-medium text-blue-900">Currently Processing:</div>
+                  <div className="text-sm font-semibold text-blue-700">
+                    {detailedProgress.current_module}
+                  </div>
+                  <div className="text-xs text-blue-600">
+                    {detailedProgress.current_step?.replace('_', ' ')}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Recently Completed Modules */}
+          {detailedProgress?.completed_modules && detailedProgress.completed_modules.length > 0 && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="font-medium text-green-900 mb-2">Completed Modules:</div>
+              <div className="max-h-24 overflow-y-auto">
+                {detailedProgress.completed_modules.slice(-3).map((module, index) => (
+                  <div key={index} className="flex items-center text-sm text-green-700 mb-1">
+                    <svg className="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <span className="truncate">{module}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
+        {/* Processing Stage Description */}
         <div className="mt-6 text-left max-w-md mx-auto">
-          <h4 className="font-medium text-gray-900 mb-3">What's happening:</h4>
+          <h4 className="font-medium text-gray-900 mb-3">Course Generation Process</h4>
           <ul className="space-y-2 text-sm text-gray-600">
             <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Generating module introductions</span>
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                detailedProgress?.stage === 'loading_data' ? 'bg-blue-500 animate-pulse' : 
+                detailedProgress?.stage !== 'initializing' ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
+              <span>Loading previous stage data</span>
             </li>
             <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Creating comprehensive content</span>
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                detailedProgress?.stage === 'generating_course' ? 'bg-blue-500 animate-pulse' : 
+                detailedProgress?.completed_modules?.length > 0 ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
+              <span>Generating module content with AI</span>
             </li>
             <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Developing assessments</span>
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                detailedProgress?.current_step === 'generating_conclusion' ? 'bg-blue-500 animate-pulse' : 
+                detailedProgress?.stage === 'exporting' ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
+              <span>Creating course conclusion</span>
             </li>
             <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-              <span>Generating summaries</span>
-            </li>
-            <li className="flex items-start">
-              <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+              <div className={`w-2 h-2 rounded-full mt-2 mr-3 flex-shrink-0 ${
+                detailedProgress?.stage === 'exporting' ? 'bg-blue-500 animate-pulse' : 
+                detailedProgress?.stage === 'completed' ? 'bg-green-500' : 'bg-gray-300'
+              }`}></div>
               <span>Exporting course materials</span>
             </li>
           </ul>

@@ -14,7 +14,8 @@ const Stage1Component = ({ course, status, taskStatus, stageData, onNext, curren
   // Extract courseId from course object
   const courseId = course?.id || course?.course_id || course?.project_id;
 
-  const isCompleted = status === 'completed';
+  // Determine completion based on stage data availability AND backend status
+  const isCompleted = (status === 'completed') || (stageData && stageData.available_files);
   const isLoading = status === 'active' && taskStatus?.status === 'running';
 
   // Load previously saved selections only when Stage 1 is completed
