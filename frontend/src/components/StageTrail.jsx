@@ -75,7 +75,7 @@ const StageTrail = ({
         case 'repo':
           return `${data.available_files?.length || 0} files found`;
         case 'analysis':
-          return `${data.processed_files_count || 0} docs analyzed`;
+          return `${data.processed_files_count || data.analyzed_documents?.length || 0} docs analyzed`;
         case 'pathways':
           return `${data.pathways?.length || 0} pathways generated`;
         case 'generation':

@@ -14,7 +14,7 @@ const CourseCreationPage = () => {
   const { getAccessTokenSilently } = useAuth0();
   
   const [course, setCourse] = useState(null);
-  const [currentStage, setCurrentStage] = useState('repo');
+  const [currentStage, setCurrentStage] = useState(null);
   const [completedStages, setCompletedStages] = useState(new Set());
   const [taskStatus, setTaskStatus] = useState(null);
   const [stageData, setStageData] = useState({});
@@ -154,20 +154,30 @@ const CourseCreationPage = () => {
       
       setCompletedStages(newCompletedStages);
       
-              // Handle stage progression logic
-        if (activeStage) {
-          // There's an active backend task, switch to that stage
-          setCurrentStage(activeStage);
-        } else {
-          // No active backend task
-          // Don't automatically advance stages when tasks complete
-          // Let the user control progression by clicking "Next"
-          // Only set initial stage if none is set
-          if (!currentStage) {
-            setCurrentStage('repo');
+                    // Handle stage progression logic
+      if (activeStage) {
+        // There's an active backend task, switch to that stage
+        setCurrentStage(activeStage);
+      } else {
+        // No active backend task
+        // Determine the appropriate stage based on completed stages
+        // On page refresh or initial load, set stage based on progress
+        const stageOrder = ['repo', 'analysis', 'pathways', 'generation'];
+        let targetStage = 'repo'; // Default to first stage
+        
+        // Find the last completed stage and stay there for review
+        for (let i = stageOrder.length - 1; i >= 0; i--) {
+          if (newCompletedStages.has(stageOrder[i])) {
+            // Stay on the last completed stage so user can review results
+            targetStage = stageOrder[i];
+            break;
           }
-          // Otherwise, keep the current stage unchanged
         }
+        
+        console.log(`Setting stage to: ${targetStage} based on completed stages:`, Array.from(newCompletedStages));
+        setCurrentStage(targetStage);
+        // Otherwise, keep the current stage unchanged
+      }
     } else {
       // Fallback to old logic for backward compatibility
       const mappedStage = stageMap[taskStatusData.current_stage];
