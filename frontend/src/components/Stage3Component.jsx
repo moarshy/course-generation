@@ -20,7 +20,7 @@ const generateStableId = (module, pathwayIndex, moduleIndex) => {
   return `module-${pathwayIndex}-${contentHash}-${timestamp}`;
 };
 
-const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
+const Stage3Component = ({ course, taskStatus, stageData, onNext, currentStage, completedStages }) => {
   const { getAccessTokenSilently } = useAuth0();
   const [learningPathways, setLearningPathways] = useState([]);
   const [availableDocuments, setAvailableDocuments] = useState([]);
@@ -660,7 +660,7 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
               </select>
             </div>
             
-            <div className="flex justify-between">
+            <div className="flex justify-end">
               <button
                 onClick={() => {
                   // Transform pathway to match GroupedLearningPath structure
@@ -698,9 +698,13 @@ const Stage3Component = ({ course, taskStatus, stageData, onNext }) => {
                   console.log('Sending Stage 4 data:', stage4Data);
                   onNext(stage4Data);
                 }}
-                className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+                disabled={completedStages?.has('generation')}
+                className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
               >
-                Generate Course →
+                {completedStages?.has('generation')
+                  ? 'Stage Complete' 
+                  : 'Generate Course →'
+                }
               </button>
             </div>
           </div>

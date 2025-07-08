@@ -460,6 +460,8 @@ const CourseCreationPage = () => {
             stageData={stageData.repo}
             onNext={(data) => handleStageNext('repo', data)}
             isLoading={isLoading}
+            currentStage={currentStage}
+            completedStages={completedStages}
           />
         );
       case 'analysis':
@@ -471,6 +473,8 @@ const CourseCreationPage = () => {
             course={course}
             onNext={(data) => handleStageNext('analysis', data)}
             isLoading={isLoading}
+            currentStage={currentStage}
+            completedStages={completedStages}
           />
         );
       case 'pathways':
@@ -482,6 +486,8 @@ const CourseCreationPage = () => {
             course={course}
             onNext={(data) => handleStageNext('pathways', data)}
             isLoading={isLoading}
+            currentStage={currentStage}
+            completedStages={completedStages}
           />
         );
       case 'generation':

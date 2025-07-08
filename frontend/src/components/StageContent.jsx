@@ -171,25 +171,29 @@ export const Stage1Content = ({ status, taskStatus, stageData, onNext, isLoading
 };
 
 // Stage 2: Document Analysis Content
-export const Stage2Content = ({ status, taskStatus, stageData, course, onNext, isLoading }) => {
+export const Stage2Content = ({ status, taskStatus, stageData, course, onNext, isLoading, currentStage, completedStages }) => {
   return (
     <Stage2Component 
       course={course}
       taskStatus={taskStatus}
       stageData={stageData}
       onNext={onNext}
+      currentStage={currentStage}
+      completedStages={completedStages}
     />
   );
 };
 
 // Stage 3: Learning Pathways Content
-export const Stage3Content = ({ status, taskStatus, stageData, course, onNext, isLoading }) => {
+export const Stage3Content = ({ status, taskStatus, stageData, course, onNext, isLoading, currentStage, completedStages }) => {
   return (
     <Stage3Component 
       course={course}
       taskStatus={taskStatus}
       stageData={stageData}
       onNext={onNext}
+      currentStage={currentStage}
+      completedStages={completedStages}
     />
   );
 };

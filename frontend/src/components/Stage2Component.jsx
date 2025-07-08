@@ -4,7 +4,7 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
-const Stage2Component = ({ course, taskStatus, stageData, onNext }) => {
+const Stage2Component = ({ course, taskStatus, stageData, onNext, currentStage, completedStages }) => {
   const { getAccessTokenSilently } = useAuth0();
   const [analyzedDocuments, setAnalyzedDocuments] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -680,9 +680,13 @@ const Stage2Component = ({ course, taskStatus, stageData, onNext }) => {
         <div className="flex justify-end pt-6 border-t border-gray-200">
           <button
             onClick={handleNext}
-            className="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600 transition-colors duration-200"
+            disabled={completedStages?.has('pathways') || completedStages?.has('generation')}
+            className="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600 transition-colors duration-200 disabled:bg-gray-300 disabled:cursor-not-allowed"
           >
-            Next: Generate Learning Pathways
+            {(completedStages?.has('pathways') || completedStages?.has('generation'))
+              ? 'Stage Complete' 
+              : 'Next: Generate Learning Pathways'
+            }
           </button>
         </div>
       </div>

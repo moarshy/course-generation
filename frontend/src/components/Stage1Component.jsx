@@ -4,7 +4,7 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
-const Stage1Component = ({ course, status, taskStatus, stageData, onNext }) => {
+const Stage1Component = ({ course, status, taskStatus, stageData, onNext, currentStage, completedStages }) => {
   const { getAccessTokenSilently } = useAuth0();
   const [selectedFolders, setSelectedFolders] = useState([]);
   const [selectedOverviewDoc, setSelectedOverviewDoc] = useState('');
@@ -314,10 +314,13 @@ const Stage1Component = ({ course, status, taskStatus, stageData, onNext }) => {
       <div className="flex justify-end space-x-3">
         <button
           onClick={handleNext}
-          disabled={!isCompleted || selectedFolders.length === 0}
+          disabled={!isCompleted || selectedFolders.length === 0 || (completedStages?.has('analysis') || completedStages?.has('pathways') || completedStages?.has('generation'))}
           className="bg-blue-500 text-white px-6 py-2 rounded-md hover:bg-blue-600 transition-colors duration-200 disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
-          Next: Analyze Documents
+          {(completedStages?.has('analysis') || completedStages?.has('pathways') || completedStages?.has('generation'))
+            ? 'Stage Complete' 
+            : 'Next: Analyze Documents'
+          }
         </button>
       </div>
     </div>
