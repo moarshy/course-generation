@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends, status, Query
 from typing import Optional
 import redis
 import json
-from shared.models import (
+from backend.shared.models import (
     CourseGenerationRequest, GenerationTaskStatus,
     Stage1Response, Stage1Input, Stage2Response, Stage2Input, Stage3Input, Stage3Response,
     Stage4Input, Stage4Response, UpdateDocumentRequest,

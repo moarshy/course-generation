@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List
-from shared.models import Course, CourseCreate, CourseUpdate, CourseInDB
+from backend.shared.models import Course, CourseCreate, CourseUpdate, CourseInDB
 from backend.services.course_service import CourseService
 from backend.core.security import get_current_user_id
 

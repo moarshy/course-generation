@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone 
 from typing import List, Optional, Dict, Any
 from pathlib import Path
-from shared.models import Course, CourseCreate, CourseUpdate, CourseInDB, CourseStatus
+from backend.shared.models import Course, CourseCreate, CourseUpdate, CourseInDB, CourseStatus
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)

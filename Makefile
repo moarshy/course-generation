@@ -31,7 +31,7 @@ dev-down: ## Stop development environment
 
 install-backend: ## Install backend dependencies
 	@echo "Installing backend dependencies..."
-	pip install -e backend/
+	uv pip install -e backend/
 
 install-frontend: ## Install frontend dependencies
 	@echo "Installing frontend dependencies..."
@@ -41,11 +41,11 @@ install: install-backend install-frontend ## Install all dependencies
 
 run-backend: ## Run backend server
 	@echo "Starting backend server..."
-	cd backend && uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 run-worker: ## Run celery worker
 	@echo "Starting celery worker..."
-	cd backend && celery -A worker.tasks worker --loglevel=info
+	celery -A backend.worker.tasks worker --loglevel=info
 
 run-frontend: ## Run frontend server
 	@echo "Starting frontend server..."

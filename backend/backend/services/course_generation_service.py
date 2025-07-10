@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from celery import Celery
 from backend.core.config import settings
-from shared.models import (
+from backend.shared.models import (
     CourseGenerationStage, GenerationStatus, GenerationTaskStatus,
     Stage1Response, Stage1Input, Stage2Response, Stage3Response, Stage4Response,
     Stage2Input, Stage3Input, Stage4Input, PathwaySummary, CourseSummary, DocumentSummary,

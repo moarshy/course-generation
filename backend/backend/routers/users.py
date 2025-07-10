@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import Dict, Any
-from shared.models import User, UserSync, UserInDB
+from backend.shared.models import User, UserSync, UserInDB
 from backend.services.user_service import UserService
 from backend.core.security import get_current_user, get_current_user_id
 
