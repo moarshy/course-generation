@@ -7,7 +7,8 @@ from backend.shared.models import (
     CourseGenerationRequest, GenerationTaskStatus,
     Stage1Response, Stage1Input, Stage2Response, Stage2Input, Stage3Input, Stage3Response,
     Stage4Input, Stage4Response, UpdateDocumentRequest,
-    UpdateModuleRequest, CreateModuleRequest, UpdatePathwayRequest, ModuleReorderRequest
+    UpdateModuleRequest, CreateModuleRequest, UpdatePathwayRequest, ModuleReorderRequest,
+    CourseUpdate, CourseStatus
 )
 from backend.services.course_generation_service import CourseGenerationService
 from backend.services.course_service import CourseService
@@ -40,7 +41,6 @@ async def start_course_generation(
         )
         
         # Update course status
-        from shared.models import CourseUpdate, CourseStatus
         course_service.update_course(course_id, CourseUpdate(status=CourseStatus.GENERATING))
         
         return {

@@ -30,6 +30,25 @@ class DocumentMetadata(BaseModel):
     frontmatter: Dict[str, Any] = Field(default_factory=dict)
     primary_language: Optional[str] = None
 
+class DocumentAnalysis(BaseModel):
+    """Comprehensive document analysis result from multi-agent analysis"""
+    file_path: str
+    title: str
+    doc_type: DocumentType
+    complexity_level: ComplexityLevel
+    key_concepts: List[str]
+    learning_objectives: List[str]
+    semantic_summary: str
+    code_languages: List[str]
+    headings: List[str]
+    prerequisites: List[str]
+    related_topics: List[str]
+    
+    # Enhanced metadata
+    word_count: int = 0
+    code_block_count: int = 0
+    confidence_score: float = 0.0
+    analysis_timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 class DocumentNode(BaseModel):
     """A document node in the document tree."""
@@ -125,12 +144,23 @@ class Stage1Result(BaseModel):
 
 class Stage2Result(BaseModel):
     """Stage 2: Document analysis result."""
-    document_tree_path: str
-    processed_files_count: int
-    failed_files_count: int
-    include_folders: List[str]
+    # Legacy fields for backward compatibility
+    document_tree_path: str = ""
+    processed_files_count: int = 0
+    failed_files_count: int = 0
+    include_folders: List[str] = Field(default_factory=list)
     overview_doc: Optional[str] = None
     analysis_timestamp: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Enhanced metadata from debate agent
+    stage1_result: Optional['Stage1Result'] = None
+    document_analyses: List[DocumentAnalysis] = Field(default_factory=list)
+    total_concepts: int = 0
+    avg_complexity: str = ""
+    language_distribution: Dict[str, int] = Field(default_factory=dict)
+    document_type_distribution: Dict[str, int] = Field(default_factory=dict)
+    overview_context: str = ""
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Stage3Result(BaseModel):

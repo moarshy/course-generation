@@ -257,3 +257,19 @@ def parse_frontmatter(content: str) -> tuple[Dict[str, Any], str]:
         return {}, content
     except Exception:
         return {}, content 
+    
+def parse_json_safely(json_str: str, default: Any = None) -> Any:
+    """Safely parse JSON string, returning default value on error"""
+    if not json_str:
+        return default or []
+    
+    try:
+        # Handle case where json_str might already be parsed
+        if isinstance(json_str, (list, dict)):
+            return json_str
+        
+        # Try to parse as JSON
+        return json.loads(json_str)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        # Return default if parsing fails
+        return default or []

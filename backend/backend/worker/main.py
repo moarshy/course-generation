@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import tasks to register them with Celery
-from worker.tasks import app as celery_app
+from backend.worker.tasks import app as celery_app
 
 # Get Redis URL from environment
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")

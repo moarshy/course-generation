@@ -4,7 +4,7 @@ import os
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
-from shared.models import User, UserSync, UserInDB
+from backend.shared.models import User, UserSync, UserInDB
 from backend.core.config import settings
 
 logger = logging.getLogger(__name__)

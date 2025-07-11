@@ -1,6 +1,10 @@
 from typing import List
 from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     # Project info
@@ -31,7 +35,8 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # Course Data Configuration
-    ROOT_DATA_DIR: str = "../data"
+    ROOT_DATA_DIR: str = "/Users/arshath/play/naptha/course-generation/data"
+    logger.info(f"ROOT_DATA_DIR: {ROOT_DATA_DIR}")
     
     # AI/LLM Configuration
     GEMINI_API_KEY: str = ""

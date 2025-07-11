@@ -9,14 +9,17 @@ import redis
 import json
 from datetime import datetime
 
-from shared.models import (
-    CourseGenerationStage, StageStatus, CourseGenerationTask,
-    Stage1Result, Stage2Result, Stage3Result, Stage4Result,
-    Stage2UserInput, Stage3UserInput, Stage4UserInput,
-    ComplexityLevel, DocumentTree, GroupedLearningPath, GeneratedCourse
+from backend.shared.models import (
+    CourseGenerationStage, 
+    Stage2Result, Stage3Result, Stage4Result, Stage4UserInput,
+    ComplexityLevel, DocumentTree, GroupedLearningPath, GeneratedCourse,
+    GeneratedCourse, DocumentMetadata, DocumentNode, DocumentAnalysis
 )
-from shared.utils import StageDataManager
-from worker.course_content_agent.modules import RepoManager, LearningPathGenerator, CourseGenerator
+from backend.shared.utils import StageDataManager
+from backend.worker.course_content_agent.modules import LearningPathGenerator, CourseGenerator, CourseExporter
+from backend.worker.agents.s1_repo_cloner import process_stage1
+from backend.worker.agents.s2_document_analyzer import process_stage2
+from backend.core.config import settings
 
 # Load environment variables
 load_dotenv()
@@ -46,9 +49,11 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("litellm").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+##### Clients #####
+redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
 
 ##### ALL CONFIGURATION IS HERE #####
-OVERVIEW_DOC_MAX_WORDS = 3000
+OVERVIEW_DOC_MAX_WORDS = 10000
 
 def get_n_words(text: str, max_words: int) -> int:
     """Truncate text to max_words words."""
@@ -56,7 +61,7 @@ def get_n_words(text: str, max_words: int) -> int:
 
 def get_stage_manager(user_id: str, course_id: str) -> StageDataManager:
     """Get a stage data manager for a specific user and course."""
-    base_dir = f"../data/{user_id.replace('|', '_').replace('/', '_')}"
+    base_dir = Path(settings.ROOT_DATA_DIR) / user_id.replace('|', '_').replace('/', '_')
     return StageDataManager(base_dir, course_id)
 
 @app.task(bind=True)
@@ -65,61 +70,22 @@ def stage1_clone_repository(self, user_id: str, course_id: str, repo_url: str) -
     try:
         logger.info(f"Starting Stage 1 for course {course_id}: cloning {repo_url}")
         
-        # Initialize repo manager
-        cache_dir = f"../data/{user_id.replace('|', '_').replace('/', '_')}/{course_id}/cache"
-        repo_manager = RepoManager(cache_dir)
-        
-        # Clone repository
-        repo_path = repo_manager.clone_or_update_repo(repo_url)
-        repo_name = Path(repo_url).name.replace('.git', '')
-        
-        # Discover available folders and files
-        md_files = repo_manager.find_documentation_files(repo_path)
-        
-        # Get folder structure
-        folders = set()
-        all_files = []
-        for file_path in md_files:
-            relative_path = file_path.relative_to(repo_path)
-            all_files.append(str(relative_path))
-            
-            # Add all parent directories
-            for parent in relative_path.parents:
-                if parent != Path('.'):
-                    folders.add(str(parent))
-        
-        available_folders = sorted(list(folders))
-        
-        # Suggest overview documents (show all available files, not just keyword matches)
-        overview_candidates = []
-        suggested_overview_docs = []
-        
-        for file_path in md_files:
-            relative_path = str(file_path.relative_to(repo_path))
-            overview_candidates.append(relative_path)
-            
-            # Mark files with common overview keywords as suggested
-            filename = file_path.name.lower()
-            if any(keyword in filename for keyword in ['readme', 'overview', 'introduction', 'getting-started', 'index']):
-                suggested_overview_docs.append(relative_path)
-        
-        # Create stage 1 result
-        stage1_result = Stage1Result(
-            repo_path=str(repo_path),
-            repo_name=repo_name,
-            available_folders=available_folders,
-            available_files=all_files,
-            suggested_overview_docs=suggested_overview_docs[:5],  # Top 5 suggested
-            all_overview_candidates=overview_candidates  # All available files
-        )
-        
-        # Save stage data
-        stage_manager = get_stage_manager(user_id, course_id)
-        stage_data_path = stage_manager.save_stage_data(
-            CourseGenerationStage.CLONE_REPO, stage1_result
+        stage1_result = process_stage1(
+            repo_url, 
+            user_id=user_id, 
+            course_id=course_id, 
+            task_id=self.request.id, 
+            redis_client=redis_client
         )
         
         logger.info(f"Stage 1 completed for course {course_id}")
+
+        stage_manager = get_stage_manager(user_id, course_id)
+        stage_manager.save_stage_data(
+            CourseGenerationStage.CLONE_REPO, 
+            stage1_result,
+        )
+
         return {
             'success': True,
             'stage': CourseGenerationStage.CLONE_REPO.value,
@@ -135,155 +101,123 @@ def stage1_clone_repository(self, user_id: str, course_id: str, repo_url: str) -
             'error': str(e)
         }
 
-@app.task(bind=True)
-def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dict[str, Any]) -> Dict[str, Any]:
-    """Stage 2: Process documents with user-selected folders and overview"""
-    try:
-        logger.info(f"Starting Stage 2 for course {course_id}: document analysis")
-        
-        # Parse user input
-        stage2_input = Stage2UserInput(**user_input)
-        
-        # Get stage manager
-        stage_manager = get_stage_manager(user_id, course_id)
-        
-        # Load Stage 1 data
-        stage1_result = stage_manager.load_stage_data(CourseGenerationStage.CLONE_REPO)
+def convert_stage2_to_document_tree(stage2_result: Stage2Result, stage1_result) -> DocumentTree:
+    """Convert Stage2Result to DocumentTree format expected by frontend"""
+    try:        
+        # Create document nodes from document analyses
+        nodes = {}
         repo_path = Path(stage1_result.repo_path)
         
-        # Import CourseBuilder for document processing
-        from worker.course_content_agent.main import CourseBuilder
-        
-        # Initialize course builder
-        cache_dir = f"../data/{user_id.replace('|', '_').replace('/', '_')}/{course_id}/cache"
-        builder = CourseBuilder(cache_dir=cache_dir)
-        
-        # Find documentation files with folder filtering
-        repo_manager = RepoManager(cache_dir)
-        md_files = repo_manager.find_documentation_files(repo_path, stage2_input.include_folders)
-        
-        # Initialize detailed progress tracking in Redis
-        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-        progress_key = f"stage2_progress:{course_id}"
-        
-        # Create list of files to process
-        files_to_process = []
-        for file_path in md_files:
-            relative_path = str(file_path.relative_to(repo_path))
-            files_to_process.append(relative_path)
-        
-        # Initialize progress data
-        progress_data = {
-            'total_files': len(files_to_process),
-            'processed_files': 0,
-            'failed_files': 0,
-            'current_file': '',
-            'files_to_process': files_to_process,
-            'completed_files': [],
-            'failed_files_list': [],
-            'stage': 'raw_processing',
-            'stage_description': 'Extracting content from markdown files',
-            'updated_at': datetime.now().isoformat()
-        }
-        redis_client.set(progress_key, json.dumps(progress_data))
+        for doc_analysis in stage2_result.document_analyses:
+            # Read the document content
+            try:
+                with open(doc_analysis.file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception as e:
+                logger.warning(f"Could not read content for {doc_analysis.file_path}: {e}")
+                content = f"Content unavailable: {e}"
+            
+            # Convert absolute path to relative path from repo directory
+            try:
+                doc_path = Path(doc_analysis.file_path).resolve()
+                repo_path_resolved = Path(repo_path).resolve()
+                
+                # Try to make it relative to repo_path
+                relative_path = doc_path.relative_to(repo_path_resolved)
+                relative_path_str = str(relative_path)
+                
+                logger.debug(f"Converted {doc_analysis.file_path} -> {relative_path_str}")
+                
+            except ValueError as e:
+                # If we can't make it relative, use just the filename
+                relative_path_str = Path(doc_analysis.file_path).name
+                logger.warning(f"Could not make path relative: {doc_analysis.file_path}, using filename: {relative_path_str}. Error: {e}")
+            
+            # Create document metadata
+            metadata = DocumentMetadata(
+                title=doc_analysis.title,
+                doc_type=doc_analysis.doc_type,
+                key_concepts=doc_analysis.key_concepts,
+                learning_objectives=doc_analysis.learning_objectives,
+                semantic_summary=doc_analysis.semantic_summary,
+                headings=doc_analysis.headings,
+                code_blocks=[],  # Could extract from code_languages if needed
+                frontmatter=getattr(doc_analysis, 'frontmatter', {}),
+                primary_language=doc_analysis.code_languages[0] if doc_analysis.code_languages else None
+            )
+            
+            # Create document node with relative path
+            node = DocumentNode(
+                id=relative_path_str,  
+                path=relative_path_str,
+                filename=Path(relative_path_str).name,
+                content=content,
+                metadata=metadata,
+                parent_path=None  # Could set this if needed
+            )
+            
+            # Use relative path as the key
+            nodes[relative_path_str] = node
         
         # Create document tree
-        tree = DocumentTree(
-            repo_url=str(repo_path),
+        document_tree = DocumentTree(
+            repo_url=getattr(stage1_result, 'repo_url', ''),
             repo_name=stage1_result.repo_name,
-            root_path=str(repo_path),
-            nodes={},
-            tree_structure={},
-            cross_references={}
+            root_path=stage1_result.repo_path,
+            nodes=nodes,
+            tree_structure={},  # Could build this if needed
+            cross_references={},  # Could analyze cross-references if needed
+            last_updated=datetime.utcnow(),
+            document_categories={},  # Could categorize by doc_type if needed
+            complexity_distribution={},  # Could build from complexity_level if needed
+            learning_paths=[]  # Will be populated in Stage 3
         )
         
-        # Process documents with progress tracking
-        processed_results = builder._process_raw_documents_with_progress(
-            md_files, tree, progress_key, redis_client, user_id, course_id
+        logger.info(f"Created DocumentTree with {len(nodes)} nodes using relative paths")
+        return document_tree
+        
+    except Exception as e:
+        logger.error(f"Failed to convert Stage2Result to DocumentTree: {e}")
+        raise
+
+@app.task(bind=True)
+def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dict[str, Any]) -> Dict[str, Any]:
+    """Stage 2 - Document analysis"""
+    try:
+        logger.info(f"Starting Stage 2 document analysis for course {course_id}")
+        
+        # Load Stage 1 result from stage manager
+        stage_manager = get_stage_manager(user_id, course_id)
+        stage1_result = stage_manager.load_stage_data(CourseGenerationStage.CLONE_REPO)
+        
+        if not stage1_result:
+            raise ValueError(f"Stage 1 result not found for course {course_id}")
+        
+        # Call the stage processor
+        stage2_result = process_stage2(
+            stage1_result=stage1_result,
+            user_input=user_input,
+            task_id=self.request.id,
+            redis_client=redis_client,
+            course_id=course_id
         )
         
-        # Update progress for LLM analysis stage
-        progress_data['stage'] = 'llm_analysis'
-        progress_data['stage_description'] = 'Analyzing content with AI for key concepts and structure'
-        progress_data['processed_files'] = 0  # Reset for LLM stage
-        progress_data['completed_files'] = []
-        progress_data['current_file'] = ''
-        progress_data['updated_at'] = datetime.now().isoformat()
-        redis_client.set(progress_key, json.dumps(progress_data))
+        # Save Stage2Result using stage manager
+        stage_manager.save_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS, stage2_result)
         
-        # Find overview document if specified
-        overview_context = ""
-        if stage2_input.overview_doc:
-            overview_path = repo_path / stage2_input.overview_doc
-            if overview_path.exists():
-                with open(overview_path, 'r', encoding='utf-8') as f:
-                    overview_context = get_n_words(f.read(), OVERVIEW_DOC_MAX_WORDS)
-        
-        # Apply LLM analysis with progress tracking
-        successfully_processed_count = builder._apply_llm_analysis_with_progress(
-            processed_results, tree, overview_context, progress_key, redis_client, user_id, course_id
-        )
-        
-        # Calculate counts
-        total_raw_files = len(processed_results)
-        successful_raw_files = len([r for r in processed_results if r['success']])
-        failed_raw_files = total_raw_files - successful_raw_files
-        
-        # Final progress update
-        progress_data['stage'] = 'completed'
-        progress_data['stage_description'] = 'Document analysis completed'
-        progress_data['current_file'] = ''
-        progress_data['updated_at'] = datetime.now().isoformat()
-        redis_client.set(progress_key, json.dumps(progress_data))
-        
-        # Create stage 2 result
-        stage2_result = Stage2Result(
-            document_tree_path="",  # Will be set after saving
-            processed_files_count=successfully_processed_count,  # Files successfully processed by LLM
-            failed_files_count=failed_raw_files,  # Files that failed during raw processing
-            include_folders=stage2_input.include_folders,
-            overview_doc=stage2_input.overview_doc
-        )
-        
-        # Save document tree separately
-        tree_path = stage_manager.save_stage_data(
-            CourseGenerationStage.DOCUMENT_ANALYSIS, tree
-        )
-        stage2_result.document_tree_path = tree_path
-        
-        # Save stage result to a different key to avoid overwriting the tree
-        stage_manager.save_stage_data(
-            CourseGenerationStage.DOCUMENT_ANALYSIS, stage2_result, suffix="result"
-        )
-        
-        # Clean up progress data after completion
-        redis_client.delete(progress_key)
+        # Convert to DocumentTree format and save separately
+        document_tree = convert_stage2_to_document_tree(stage2_result, stage1_result)
+        stage_manager.save_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS, document_tree, suffix="tree")
         
         logger.info(f"Stage 2 completed for course {course_id}")
         return {
             'success': True,
             'stage': CourseGenerationStage.DOCUMENT_ANALYSIS.value,
-            'result': stage2_result.model_dump(),
-            'next_stage': CourseGenerationStage.PATHWAY_BUILDING.value
+            'result': stage2_result.model_dump()
         }
         
     except Exception as e:
         logger.error(f"Stage 2 failed for course {course_id}: {str(e)}")
-        
-        # Update progress with error
-        try:
-            redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-            progress_key = f"stage2_progress:{course_id}"
-            progress_data = {
-                'stage': 'failed',
-                'stage_description': f'Document analysis failed: {str(e)}',
-                'error': str(e),
-                'updated_at': datetime.now().isoformat()
-            }
-            redis_client.set(progress_key, json.dumps(progress_data))
-        except:
-            pass  # Don't let Redis errors mask the original error
-        
         return {
             'success': False,
             'stage': CourseGenerationStage.DOCUMENT_ANALYSIS.value,
@@ -488,10 +422,6 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
 def generate_course_with_progress(course_generator, pathway, document_tree, overview_context, 
                                  progress_key, redis_client, progress_data):
     """Generate course content with detailed progress tracking"""
-    from worker.course_content_agent.modules import CourseGenerator, ModuleContent, GeneratedCourse
-    from concurrent.futures import ThreadPoolExecutor
-    import json
-    from datetime import datetime
     
     logger.info(f"Generating course content for {pathway.title}")
     
@@ -691,7 +621,6 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
                 logger.warning("pathway_id missing from dictionary, generating one")
                 selected_pathway['pathway_id'] = f"pathway_{selected_pathway.get('title', 'unknown').lower().replace(' ', '_')}"
             
-            from worker.course_content_agent.models import GroupedLearningPath
             selected_pathway = GroupedLearningPath(**selected_pathway)
             logger.info(f"Converted pathway - ID: {selected_pathway.pathway_id}")
         elif not hasattr(selected_pathway, 'pathway_id'):
@@ -720,7 +649,6 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
                             'concepts_to_assess': module.get('learning_objectives', [])[:3]
                         }
             
-            from worker.course_content_agent.models import GroupedLearningPath
             selected_pathway = GroupedLearningPath(**pathway_dict)
             logger.info(f"Converted pathway with ID: {selected_pathway.pathway_id}")
         
@@ -783,13 +711,12 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         
         # Export course to markdown
         logger.info("Exporting course to markdown...")
-        from worker.course_content_agent.modules import CourseExporter
         exporter = CourseExporter()
         logger.info(f"Course exporter created: {exporter is not None}")
         
-        # Create export directory
-        user_dir = f"../data/{user_id.replace('|', '_').replace('/', '_')}/{course_id}"
-        export_dir = f"{user_dir}/generated"
+        # Create export directory   
+        user_dir = Path(settings.ROOT_DATA_DIR) / user_id.replace('|', '_').replace('/', '_') / course_id
+        export_dir = user_dir / "generated"
         logger.info(f"Export directory: {export_dir}")
         
         export_success = exporter.export_to_markdown(generated_course, export_dir)
