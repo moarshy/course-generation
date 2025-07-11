@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from backend.core.config import settings
+from backend.shared.database import init_database
 from backend.routers import users, health, projects, course_generation
 
 # Configure logging
@@ -16,12 +17,14 @@ logging.basicConfig(
 )
 
 # Set specific loggers to INFO level for important operations
-logging.getLogger("app.services.user_service").setLevel(logging.INFO)
-logging.getLogger("app.services.course_service").setLevel(logging.INFO)
-logging.getLogger("app.services.course_generation_service").setLevel(logging.INFO)
-logging.getLogger("app.routers.users").setLevel(logging.WARNING)
-logging.getLogger("app.routers.projects").setLevel(logging.WARNING)
-logging.getLogger("app.routers.course_generation").setLevel(logging.INFO)
+logging.getLogger("backend.services.user_service").setLevel(logging.INFO)
+logging.getLogger("backend.services.course_service").setLevel(logging.INFO)
+logging.getLogger("backend.services.repository_clone_service").setLevel(logging.INFO)
+logging.getLogger("backend.services.document_analyser_service").setLevel(logging.INFO)
+logging.getLogger("backend.services.learning_pathway_service").setLevel(logging.INFO)
+logging.getLogger("backend.services.modules_generation_service").setLevel(logging.INFO)
+logging.getLogger("backend.routers.course_generation").setLevel(logging.INFO)
+logging.getLogger("backend.worker.tasks").setLevel(logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database and other startup tasks"""
+    logger.info("Initializing database...")
+    init_database()
+    logger.info("Database initialized successfully")
 
 # Include routers
 app.include_router(health.router)

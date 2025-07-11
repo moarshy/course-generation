@@ -1,10 +1,11 @@
-import os
-import logging
-from celery import Celery
-from dotenv import load_dotenv
+"""
+Celery Worker Entry Point
 
-# Load environment variables
-load_dotenv()
+This module starts the Celery worker for course generation tasks.
+All task definitions are in backend.worker.tasks module.
+"""
+
+import logging
 
 # Configure logging
 logging.basicConfig(
@@ -14,34 +15,11 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Import tasks to register them with Celery
+# Import the configured Celery app from tasks module
 from backend.worker.tasks import app as celery_app
 
-# Get Redis URL from environment
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-
-# Create Celery app
-app = Celery(
-    "naptha_course_creator",
-    broker=redis_url,
-    backend=redis_url
-)
-
-# Configure Celery
-app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
-)
-
-@app.task
-def hello():
-    return "Hello from Naptha Course Creator Worker!"
-
 if __name__ == "__main__":
-    logger.info("Starting Celery worker...")
+    logger.info("Starting Celery worker for course generation...")
     # Start the worker with proper arguments
     celery_app.start([
         'worker',

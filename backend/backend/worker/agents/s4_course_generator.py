@@ -13,12 +13,71 @@ import dspy
 import redis
 
 from backend.shared.models import (
-    DocumentAnalysis, ComplexityLevel, LearningModule, ModuleContent,
-    Stage3Result, Stage4Result, ModuleDebateRound, ModuleDebateHistory
+    DocumentAnalysis, ComplexityLevel
 )
-from backend.worker.config import ProcessingConfig, AGENT_INSTRUCTIONS
+from backend.shared.utils import get_n_words
+from backend.core.config import settings, AGENT_INSTRUCTIONS
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# DSPy-Compatible Models (matching debate_course_content_agent structure)
+# =============================================================================
+
+class LearningModule(BaseModel):
+    """Learning module with documents and objectives"""
+    module_id: str
+    title: str
+    description: str
+    documents: List[str]
+    learning_objectives: List[str]
+
+class ModuleContent(BaseModel):
+    """Generated content for a single module - all 5 components"""
+    module_id: str
+    title: str
+    description: str
+    learning_objectives: List[str] = Field(default_factory=list)
+    introduction: str  # Module introduction content (markdown)
+    main_content: str  # Synthesized main content from source documents (markdown)
+    conclusion: str  # Module conclusion content (markdown)
+    assessment: str  # Assessment questions with answers (markdown)
+    summary: str  # Module summary/wrap-up (markdown)
+
+class ModuleDebateRound(BaseModel):
+    """Single round of module content debate"""
+    round_number: int
+    proposal: Optional[ModuleContent] = None
+    proposal_reasoning: str = ""
+    critique: str = ""
+    severity: str = ""  # 'major_issues', 'minor_issues', 'acceptable'
+    error_message: Optional[str] = None
+
+class ModuleDebateHistory(BaseModel):
+    """Complete debate history for a module"""
+    module_id: str
+    rounds: List[ModuleDebateRound] = Field(default_factory=list)
+    final_content: Optional[ModuleContent] = None
+    success: bool = False
+
+class Stage3Result(BaseModel):
+    """Local Stage3Result model for s4 processing"""
+    learning_paths: List[Any] = Field(default_factory=list)  # Will contain LearningPath objects
+    target_complexity: Optional[ComplexityLevel] = None
+    stage2_result: Optional[Any] = None  # Contains document_analyses
+
+class Stage4Result(BaseModel):
+    """Local Stage4Result model for s4 processing"""
+    stage3_result: Optional[Stage3Result] = None
+    generated_content: List[ModuleContent] = Field(default_factory=list)
+    debate_histories: List[ModuleDebateHistory] = Field(default_factory=list)
+    additional_instructions: str = ""
+    total_modules_processed: int = 0
+    successful_generations: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 # =============================================================================
 # Configuration
@@ -26,17 +85,13 @@ logger = logging.getLogger(__name__)
 
 class S4Config:
     """Stage 4 Configuration"""
-    MAX_DEBATES = ProcessingConfig.MAX_DEBATES
-    MAX_CONTENT_WORDS = ProcessingConfig.MAX_CONTENT_WORDS
-    MAX_OVERVIEW_WORDS = ProcessingConfig.MAX_OVERVIEW_WORDS
+    MAX_DEBATES = settings.MAX_DEBATES
+    MAX_CONTENT_WORDS = settings.MAX_CONTENT_WORDS
+    MAX_OVERVIEW_WORDS = settings.MAX_OVERVIEW_WORDS
 
 # =============================================================================
 # Utility Functions
 # =============================================================================
-
-def get_n_words(text: str, n: int) -> str:
-    """Get the first n words from a text"""
-    return ' '.join(text.split()[:n])
 
 def prepare_source_documents_content(learning_module: LearningModule, 
                                    document_analyses: List[DocumentAnalysis], 

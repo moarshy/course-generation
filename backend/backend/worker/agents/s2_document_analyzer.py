@@ -19,11 +19,10 @@ import redis
 import frontmatter
 
 from backend.shared.models import (
-    DocumentAnalysis, DocumentType, ComplexityLevel, 
-    Stage1Result, Stage2Result, Stage2UserInput
+    DocumentAnalysis, DocumentType, ComplexityLevel, Stage2Input
 )
-from backend.shared.utils import parse_json_safely
-from backend.worker.agents.config import ProcessingConfig, AGENT_INSTRUCTIONS
+from backend.shared.utils import parse_json_safely, get_n_words
+from backend.core.config import settings, AGENT_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 class S2Config:
     """Stage 2 Configuration"""
-    MAX_OVERVIEW_WORDS = ProcessingConfig.MAX_OVERVIEW_WORDS
-    MAX_CONTENT_WORDS = ProcessingConfig.MAX_CONTENT_WORDS
+    MAX_OVERVIEW_WORDS = settings.MAX_OVERVIEW_WORDS
+    MAX_CONTENT_WORDS = settings.MAX_CONTENT_WORDS
     MAX_WORKERS = 4
 
 # =============================================================================
@@ -85,10 +84,6 @@ class SemanticAnalyzer(dspy.Signature):
 # =============================================================================
 # Utility Functions
 # =============================================================================
-
-def get_n_words(text: str, n: int) -> str:
-    """Get the first n words from a text"""
-    return ' '.join(text.split()[:n])
 
 def extract_basic_metadata(content: str, filepath: Path) -> Dict[str, Any]:
     """Extract basic metadata from document content"""
@@ -175,7 +170,7 @@ def filter_files_by_folders(files: List[str], repo_path: str, include_folders: L
     
     return filtered_files
 
-def prepare_overview_context(stage1_result: Stage1Result, stage2_input: Stage2UserInput, 
+def prepare_overview_context(stage1_result: dict, stage2_input: Stage2Input, 
                            files_count: int) -> str:
     """Prepare overview context from repository and user input"""
     context = f"Repository: {stage1_result.repo_name}\n"
@@ -488,9 +483,9 @@ class S2ProgressTracker:
 # Main Stage 2 Processor
 # =============================================================================
 
-def process_stage2(stage1_result: Stage1Result, user_input: Dict[str, Any] = None,
+def process_stage2(stage1_result: dict, user_input: Dict[str, Any] = None,
                   task_id: str = None, redis_client: redis.Redis = None, 
-                  course_id: str = None) -> Stage2Result:
+                  course_id: str = None) -> dict:
     """
     Process Stage 2: Document analysis with parallel processing
     
@@ -502,13 +497,13 @@ def process_stage2(stage1_result: Stage1Result, user_input: Dict[str, Any] = Non
         course_id: Course ID for detailed progress tracking
     
     Returns:
-        Stage2Result with document analyses
+        dict with document analyses
     """
     # Parse user input
     if user_input:
-        stage2_input = Stage2UserInput(**user_input)
+        stage2_input = Stage2Input(**user_input)
     else:
-        stage2_input = Stage2UserInput()
+        stage2_input = Stage2Input()
 
     try:
         # Convert relative paths to full paths for processing
@@ -707,19 +702,18 @@ def process_stage2(stage1_result: Stage1Result, user_input: Dict[str, Any] = Non
         stats = calculate_statistics(document_analyses)
         
         # Create result
-        result = Stage2Result(
-            document_tree_path="",  # Will be set after saving if needed
-            processed_files_count=len(document_analyses),
-            failed_files_count=failed_files + llm_failed_files,
-            include_folders=stage2_input.include_folders,
-            overview_doc=stage2_input.overview_doc,
-            analysis_timestamp=datetime.utcnow(),
-            document_analyses=document_analyses,
-            total_concepts=stats['total_concepts'],
-            avg_complexity=stats['avg_complexity'],
-            language_distribution=stats['language_distribution'],
-            document_type_distribution=stats['document_type_distribution']
-        )
+        result = {
+            "processed_files_count": len(document_analyses),
+            "failed_files_count": failed_files + llm_failed_files,
+            "include_folders": stage2_input.include_folders,
+            "overview_doc": stage2_input.overview_doc,
+            "analysis_timestamp": datetime.utcnow().isoformat(),
+            "document_analyses": [doc.dict() for doc in document_analyses],
+            "total_concepts": stats['total_concepts'],
+            "avg_complexity": stats['avg_complexity'],
+            "language_distribution": stats['language_distribution'],
+            "document_type_distribution": stats['document_type_distribution']
+        }
         
         # Clean up progress data after completion
         if course_id and redis_client:

@@ -1,0 +1,117 @@
+"""
+DocumentAnalyserService - Service 2 of 4
+
+Responsibility: AI-powered document analysis
+- Triggers Celery task for document analysis
+- Manages Stage 2 user inputs and results
+- Database-driven, no pickle files
+"""
+
+import logging
+from typing import List, Dict, Any, Optional
+
+from backend.shared.database import (
+    get_db_session, AnalyzedDocument, Stage2Input
+)
+from backend.services.base_service import BaseService
+
+logger = logging.getLogger(__name__)
+
+
+class DocumentAnalyserService(BaseService):
+    """Lean service for document analysis"""
+    
+    def start_document_analysis(self, course_id: str, user_id: str, 
+                              complexity_level: str, additional_info: str = "") -> str:
+        """Start document analysis (Stage 2) - Triggers Celery task"""
+        try:
+            # Save user input to database
+            db = get_db_session()
+            try:
+                stage2_input = Stage2Input(
+                    course_id=course_id,
+                    complexity_level=complexity_level,
+                    additional_info=additional_info
+                )
+                db.merge(stage2_input)
+                db.commit()
+                
+                # Trigger Celery task using base class method
+                task_id = self.trigger_celery_task(
+                    'backend.worker.tasks.stage2_document_analysis',
+                    [user_id, course_id, {
+                        "complexity_level": complexity_level,
+                        "additional_info": additional_info
+                    }]
+                )
+                
+                logger.info(f"Started document analysis for course {course_id}, task {task_id}")
+                return task_id
+                
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Failed to start document analysis: {e}")
+            raise
+    
+    def get_analyzed_documents(self, course_id: str) -> Dict[str, Any]:
+        """Get analyzed documents from database"""
+        db = get_db_session()
+        try:
+            # Get analyzed documents
+            docs = db.query(AnalyzedDocument).filter(AnalyzedDocument.course_id == course_id).all()
+            
+            analyzed_documents = []
+            for doc in docs:
+                import json
+                
+                analyzed_documents.append({
+                    "id": doc.id,
+                    "file_path": doc.file_path,
+                    "title": doc.title,
+                    "doc_type": doc.doc_type,
+                    "complexity_level": doc.complexity_level,
+                    "key_concepts": json.loads(doc.key_concepts) if doc.key_concepts else [],
+                    "learning_objectives": json.loads(doc.learning_objectives) if doc.learning_objectives else [],
+                    "summary": doc.summary,
+                    "prerequisites": json.loads(doc.prerequisites) if doc.prerequisites else [],
+                    "related_topics": json.loads(doc.related_topics) if doc.related_topics else [],
+                    "word_count": doc.word_count,
+                    "analyzed_at": doc.analyzed_at.isoformat() if doc.analyzed_at else None
+                })
+            
+            return {
+                "analyzed_documents": analyzed_documents,
+                "total_documents": len(analyzed_documents),
+                "analysis_complete": len(analyzed_documents) > 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get analyzed documents: {e}")
+            return {"error": str(e)}
+        finally:
+            db.close()
+    
+    def get_stage2_input(self, course_id: str) -> Optional[Dict[str, Any]]:
+        """Get Stage 2 user input from database"""
+        db = get_db_session()
+        try:
+            input_data = db.query(Stage2Input).filter(Stage2Input.course_id == course_id).first()
+            if not input_data:
+                return None
+            
+            return {
+                "complexity_level": input_data.complexity_level,
+                "additional_info": input_data.additional_info,
+                "created_at": input_data.created_at.isoformat() if input_data.created_at else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get Stage 2 input: {e}")
+            return None
+        finally:
+            db.close()
+    
+    def get_task_status(self, course_id: str) -> Dict[str, Any]:
+        """Get task status from database"""
+        return super().get_task_status(course_id, 'stage2') 

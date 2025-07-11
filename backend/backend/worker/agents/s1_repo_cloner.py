@@ -15,8 +15,7 @@ from urllib.parse import urlparse
 import git
 import redis
 
-from backend.shared.models import Stage1Result
-from backend.core.config import settings
+from backend.core.config import settings, INCLUDE_EXTENSIONS, EXCLUDE_PATTERNS, EXCLUDE_FILE_PREFIXES
 
 
 logger = logging.getLogger(__name__)
@@ -29,15 +28,10 @@ class S1Config:
     """Stage 1 Configuration"""
     CACHE_DIR = Path(settings.ROOT_DATA_DIR) / ".cache"
     logger.info(f"CACHE_DIR: {CACHE_DIR}")
-    # File patterns
-    INCLUDE_EXTENSIONS = ['*.md', '*.mdx']
-    EXCLUDE_PATTERNS = {
-        'node_modules', '.git', '__pycache__', '.pytest_cache',
-        'venv', 'env', '.venv', 'build', 'dist', 'tests'
-    }
-    EXCLUDE_FILE_PREFIXES = {
-        'license', 'contributing', 'code_of_conduct', 'security', 'patents'
-    }
+    # File patterns (from centralized config)
+    INCLUDE_EXTENSIONS = INCLUDE_EXTENSIONS
+    EXCLUDE_PATTERNS = EXCLUDE_PATTERNS
+    EXCLUDE_FILE_PREFIXES = EXCLUDE_FILE_PREFIXES
 
 # =============================================================================
 # Utility Functions
@@ -177,7 +171,7 @@ class S1ProgressTracker:
 
 def process_stage1(repo_input: str, user_id: str = None, course_id: str = None,
                   include_folders: Optional[List[str]] = None, 
-                  task_id: str = None, redis_client: redis.Redis = None) -> Stage1Result:
+                  task_id: str = None, redis_client: redis.Redis = None) -> dict:
     """
     Process Stage 1: Repository setup and file discovery
     
@@ -190,7 +184,7 @@ def process_stage1(repo_input: str, user_id: str = None, course_id: str = None,
         redis_client: Redis client for progress updates
     
     Returns:
-        Stage1Result with repository info and file paths
+        dict with repository info and file paths
     """
     # Initialize progress tracker
     progress_tracker = None
@@ -248,23 +242,14 @@ def process_stage1(repo_input: str, user_id: str = None, course_id: str = None,
                 suggested_overview_docs.append(relative_path)
         
         # Create stage 1 result
-        result = Stage1Result(
-            repo_path=str(repo_path),
-            repo_name=repo_name,
-            available_folders=available_folders,
-            available_files=all_files,
-            suggested_overview_docs=suggested_overview_docs[:5],  # Top 5 suggested
-            all_overview_candidates=overview_candidates,  # All available files
-            total_files_count=len(all_files),
-            file_size_analysis={},  # Could add file size analysis here if needed
-            folder_structure={},  # Could add folder structure here if needed
-            metadata={
-                'cache_dir': S1Config.CACHE_DIR,
-                'total_folders': len(available_folders),
-                'total_overview_candidates': len(overview_candidates),
-                'repo_type': 'remote' if repo_input.startswith(('http://', 'https://', 'git@')) else 'local'
-            }
-        )
+        result = {
+            "repo_path": str(repo_path),
+            "repo_name": repo_name,
+            "available_folders": available_folders,
+            "available_files": all_files,
+            "suggested_overview_docs": suggested_overview_docs[:5],  # Top 5 suggested
+            "all_overview_candidates": overview_candidates,  # All available files
+        }
         
         if progress_tracker:
             progress_tracker.update_progress("stage1", 100, f"Stage 1 complete: {len(all_files)} files found")

@@ -8,19 +8,53 @@ import logging
 import time
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import dspy
 import redis
 
 from backend.shared.models import (
-    DocumentAnalysis, ComplexityLevel,
-    Stage2Result, Stage3Result,
-    LearningPath, LearningModule
+    DocumentAnalysis, ComplexityLevel
 )
-from backend.worker.agents.config import ProcessingConfig, AGENT_INSTRUCTIONS
+from backend.shared.utils import get_n_words
+from backend.core.config import settings, AGENT_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# DSPy-Compatible Models (matching debate_course_content_agent structure)
+# =============================================================================
+
+class LearningModule(BaseModel):
+    """Learning module with documents and objectives"""
+    module_id: str
+    title: str
+    description: str
+    documents: List[str]
+    learning_objectives: List[str]
+
+class LearningPath(BaseModel):
+    """Complete learning path with debate-generated structure"""
+    path_id: str
+    title: str
+    description: str
+    target_complexity: ComplexityLevel
+    modules: List[LearningModule]
+
+class Stage2Result(BaseModel):
+    """Local Stage2Result model for s3 processing"""
+    document_analyses: List[DocumentAnalysis] = Field(default_factory=list)
+    overview_context: str = ""
+
+class Stage3Result(BaseModel):
+    """Local Stage3Result model for s3 processing"""
+    stage2_result: Optional[Stage2Result] = None
+    learning_paths: List[LearningPath] = Field(default_factory=list)
+    target_complexity: Optional[ComplexityLevel] = None
+    debate_history: List[str] = Field(default_factory=list)
+    additional_instructions: str = ""
+    total_modules: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 # =============================================================================
 # Configuration
@@ -28,20 +62,16 @@ logger = logging.getLogger(__name__)
 
 class S3Config:
     """Stage 3 Configuration"""
-    MAX_DEBATES = ProcessingConfig.MAX_DEBATES
-    MIN_MODULES = ProcessingConfig.MIN_MODULES
-    MAX_MODULES = ProcessingConfig.MAX_MODULES
-    MAX_OVERVIEW_WORDS = ProcessingConfig.MAX_OVERVIEW_WORDS
-    MAX_CONTENT_WORDS = ProcessingConfig.MAX_CONTENT_WORDS
+    MAX_DEBATES = settings.MAX_DEBATES
+    MIN_MODULES = settings.MIN_MODULES
+    MAX_MODULES = settings.MAX_MODULES
+    MAX_OVERVIEW_WORDS = settings.MAX_OVERVIEW_WORDS
+    MAX_CONTENT_WORDS = settings.MAX_CONTENT_WORDS
     MAX_DOCUMENTS = 30
 
 # =============================================================================
 # Utility Functions
 # =============================================================================
-
-def get_n_words(text: str, n: int) -> str:
-    """Get the first n words from a text"""
-    return ' '.join(text.split()[:n])
 
 def prepare_document_info(analyses: List[DocumentAnalysis]) -> str:
     """Prepare comprehensive document information including content"""
