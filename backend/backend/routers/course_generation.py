@@ -527,9 +527,10 @@ async def reorder_modules(
 @router.post("/{course_id}/stage3")
 async def start_stage3(
     course_id: str,
+    stage3_input: Optional[Stage3Input] = None,
     current_user_id: str = Depends(get_current_user_id)
 ):
-    """Start Stage 3 - Learning Pathway Building"""
+    """Start Stage 3 - Learning Pathway Building with customization options"""
     try:
         # Verify course ownership
         if not course_service.verify_course_ownership(course_id, current_user_id):
@@ -538,11 +539,15 @@ async def start_stage3(
                 detail="Course not found"
             )
         
-        # Start Stage 3
-        task_id = generation_service.start_stage3(current_user_id, course_id)
+        # Start Stage 3 with user input
+        task_id = generation_service.start_stage3(current_user_id, course_id, stage3_input)
+        
+        complexity_msg = ""
+        if stage3_input and stage3_input.complexity_level:
+            complexity_msg = f" for {stage3_input.complexity_level} complexity level"
         
         return {
-            "message": "Stage 3 - Learning pathway building started",
+            "message": f"Stage 3 - Learning pathway building started{complexity_msg}",
             "task_id": task_id,
             "stage": "pathway_building"
         }
@@ -725,48 +730,81 @@ async def get_stage2_progress(course_id: str = Query(..., description="Course ID
 async def get_stage3_progress(course_id: str = Query(..., description="Course ID")):
     """Get detailed progress for Stage 3 pathway building"""
     try:
-        # Get progress data through service layer (more robust)
         redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-        progress_key = f"stage3_progress:{course_id}"
         
         logger.info(f"Fetching Stage 3 progress for course: {course_id}")
         
-        progress_data_str = redis_client.get(progress_key)
-        if not progress_data_str:
-            logger.info(f"No Redis progress data found for course {course_id}, checking task status")
-            # No detailed progress found - check if task is running
-            task_status = generation_service.get_task_status(course_id)
-            if task_status and (task_status.get('current_stage') == 'PATHWAY_BUILDING' or 
-                               task_status.get('stage_statuses', {}).get('PATHWAY_BUILDING') == 'running'):
-                logger.info(f"Stage 3 is running for course {course_id}, returning initializing state")
-                # Task is running but no detailed progress yet
-                return {
-                    "stage": "initializing", 
-                    "stage_description": "Initializing pathway generation...",
-                    "total_pathways": 3,
-                    "generated_pathways": 0,
-                    "current_complexity": "",
-                    "completed_complexities": []
-                }
-            else:
-                logger.warning(f"No progress information available for course {course_id}")
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No progress information available"
-                )
+        # Get task status to find the task_id
+        task_status = generation_service.get_task_status(course_id)
         
-        # Parse JSON with better error handling
-        try:
-            progress_data = json.loads(progress_data_str)
-            logger.info(f"Successfully parsed progress data for course {course_id}: {progress_data}")
-            return progress_data
-        except json.JSONDecodeError as json_err:
-            logger.error(f"Failed to parse JSON progress data for course {course_id}: {json_err}")
-            logger.error(f"Raw data: {progress_data_str}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Invalid progress data format"
-            )
+        # First try to get agent progress if task is running
+        if task_status and task_status.get('stage_statuses', {}).get('PATHWAY_BUILDING') == 'running':
+            # Try to get the task_id from the task status
+            task_id = task_status.get('task_ids', {}).get('PATHWAY_BUILDING')
+            if task_id:
+                # Check agent progress using task_id
+                agent_progress_key = f"task:{task_id}:progress"
+                agent_progress_data = redis_client.hgetall(agent_progress_key)
+                
+                if agent_progress_data:
+                    logger.info(f"Found agent progress for task {task_id}: {agent_progress_data}")
+                    # Convert agent progress to frontend format
+                    progress_percentage = int(agent_progress_data.get('progress', 0))
+                    return {
+                        "stage": "stage3",
+                        "progress": progress_percentage,
+                        "message": agent_progress_data.get('message', 'Generating learning pathway...'),
+                        "stage_description": f"Learning pathway generation: {progress_percentage}%",
+                        "timestamp": agent_progress_data.get('timestamp', '')
+                    }
+        
+        # Fallback to old progress structure
+        progress_key = f"stage3_progress:{course_id}"
+        progress_data_str = redis_client.get(progress_key)
+        if progress_data_str:
+            try:
+                progress_data = json.loads(progress_data_str)
+                logger.info(f"Using legacy progress data for course {course_id}: {progress_data}")
+                return progress_data
+            except json.JSONDecodeError as json_err:
+                logger.error(f"Failed to parse JSON progress data for course {course_id}: {json_err}")
+                logger.error(f"Raw data: {progress_data_str}")
+        
+        # If we get here, check task status for basic information
+        if task_status:
+            stage_statuses = task_status.get('stage_statuses', {})
+            pathway_status = stage_statuses.get('PATHWAY_BUILDING')
+            
+            if pathway_status == 'running':
+                logger.info(f"Stage 3 is running for course {course_id}, returning initializing state")
+                return {
+                    "stage": "stage3",
+                    "progress": 30,  # Default progress
+                    "message": "Generating learning pathway through AI debate...",
+                    "stage_description": "Learning pathway generation in progress"
+                }
+            elif pathway_status == 'completed':
+                return {
+                    "stage": "stage3",
+                    "progress": 100,
+                    "message": "Learning pathway generation completed",
+                    "stage_description": "Learning pathway generation complete"
+                }
+            elif pathway_status == 'failed':
+                error_message = task_status.get('error_message', 'Learning pathway generation failed')
+                return {
+                    "stage": "stage3",
+                    "progress": -1,
+                    "message": error_message,
+                    "stage_description": "Learning pathway generation failed"
+                }
+        
+        # No progress information available
+        logger.warning(f"No progress information available for course {course_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No progress information available"
+        )
         
     except HTTPException:
         raise

@@ -96,17 +96,20 @@ class ModuleContent(BaseModel):
 
 
 class LearningModule(BaseModel):
-    """A learning module within a pathway."""
+    """Learning module with documents and objectives"""
     module_id: str
     title: str
     description: str
+    documents: List[str]
     learning_objectives: List[str]
-    linked_documents: List[str]
-    theme: str
-    target_complexity: ComplexityLevel
-    content: Optional[ModuleContent] = None
-    assessment: Optional[AssessmentPoint] = None
 
+class LearningPath(BaseModel):
+    """Complete learning path with debate-generated structure"""
+    path_id: str
+    title: str
+    description: str
+    target_complexity: ComplexityLevel
+    modules: List[LearningModule]
 
 class GroupedLearningPath(BaseModel):
     """A structured learning pathway."""
@@ -144,15 +147,6 @@ class Stage1Result(BaseModel):
 
 class Stage2Result(BaseModel):
     """Stage 2: Document analysis result."""
-    # Legacy fields for backward compatibility
-    document_tree_path: str = ""
-    processed_files_count: int = 0
-    failed_files_count: int = 0
-    include_folders: List[str] = Field(default_factory=list)
-    overview_doc: Optional[str] = None
-    analysis_timestamp: datetime = Field(default_factory=datetime.utcnow)
-    
-    # Enhanced metadata from debate agent
     stage1_result: Optional['Stage1Result'] = None
     document_analyses: List[DocumentAnalysis] = Field(default_factory=list)
     total_concepts: int = 0
@@ -161,13 +155,18 @@ class Stage2Result(BaseModel):
     document_type_distribution: Dict[str, int] = Field(default_factory=dict)
     overview_context: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    analysis_timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Stage3Result(BaseModel):
     """Stage 3: Learning pathway result."""
-    learning_paths_path: str
-    selected_path_index: Optional[int] = None
-    custom_modifications: Dict[str, Any] = Field(default_factory=dict)
+    stage2_result: Optional['Stage2Result'] = None
+    learning_paths: List[LearningPath] = Field(default_factory=list)
+    target_complexity: Optional[ComplexityLevel] = None
+    debate_history: List[str] = Field(default_factory=list)
+    additional_instructions: str = ""
+    total_modules: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     pathway_timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -305,9 +304,9 @@ class UpdatePathwayRequest(BaseModel):
 
 
 class Stage3UserInput(BaseModel):
-    """User input for Stage 3 - Pathway Selection."""
-    selected_path_index: int
-    custom_modifications: Dict[str, Any] = Field(default_factory=dict)
+    """User input for Stage 3 - Pathway Building."""
+    complexity_level: Optional[str] = Field(default="intermediate", description="Target complexity level: beginner, intermediate, or advanced")
+    additional_instructions: Optional[str] = Field(default="", description="Additional instructions for pathway generation")
 
 
 class Stage4UserInput(BaseModel):

@@ -74,5 +74,12 @@ Core principles:
 6. Use provided source documents as the foundation for content
 7. Collaborate effectively with other agents through iterative refinement
 
+For learning path generation, ALWAYS create complete structured data with:
+- Each module MUST have: module_id, title, description, documents, learning_objectives
+- Use document file paths from the provided documents list
+- Generate meaningful module_id values (e.g., "module_01", "module_02")
+- Ensure learning_objectives are specific and measurable
+- Assign relevant documents to each module based on content relevance
+
 For document analysis: Focus on extracting key concepts, complexity level, and relationships
 """ 

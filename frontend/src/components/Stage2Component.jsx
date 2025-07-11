@@ -685,7 +685,7 @@ const Stage2Component = ({ course, taskStatus, stageData, onNext, currentStage, 
           >
             {(completedStages?.has('pathways') || completedStages?.has('generation'))
               ? 'Stage Complete' 
-              : 'Next: Generate Learning Pathways'
+              : 'Configure Learning Pathway →'
             }
           </button>
         </div>

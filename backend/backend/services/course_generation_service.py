@@ -10,7 +10,7 @@ from celery import Celery
 from backend.core.config import settings
 from backend.shared.models import (
     CourseGenerationStage, GenerationStatus, GenerationTaskStatus,
-    Stage1Response, Stage1Input, Stage2Response, Stage3Response, Stage4Response,
+    Stage1Response, Stage1Input, Stage2Response, Stage3Response, Stage3Result, Stage4Response,
     Stage2Input, Stage3Input, Stage4Input, PathwaySummary, CourseSummary, DocumentSummary,
     DocumentMetadataUpdate, ModuleUpdate, ModuleCreate, PathwayUpdate, ModuleSummary, LearningModule, AssessmentPoint
 )
@@ -515,23 +515,34 @@ class CourseGenerationService:
             logger.error(f"Failed to get Stage 2 detailed progress for course {course_id}: {e}")
             return None
     
-    def start_stage3(self, user_id: str, course_id: str) -> str:
-        """Start Stage 3 - Pathway Building"""
+    def start_stage3(self, user_id: str, course_id: str, stage3_input: Optional['Stage3Input'] = None) -> str:
+        """Start Stage 3 - Pathway Building with customization options"""
         try:
             # Generate new task ID
             task_id = str(uuid.uuid4())
             
+            # Prepare arguments for the task
+            task_args = [user_id, course_id]
+            if stage3_input:
+                task_args.append(stage3_input.model_dump())
+            else:
+                task_args.append(None)
+            
             # Send task to worker
             task = self.celery_app.send_task(
                 'backend.worker.tasks.stage3_pathway_building',
-                args=[user_id, course_id],
+                args=task_args,
                 task_id=task_id
             )
             
             # Update task info
             self._update_task_stage(course_id, task_id, CourseGenerationStage.PATHWAY_BUILDING)
             
-            logger.info(f"Started Stage 3 for course {course_id}, task {task_id}")
+            complexity_info = ""
+            if stage3_input and stage3_input.complexity_level:
+                complexity_info = f" (complexity: {stage3_input.complexity_level})"
+            
+            logger.info(f"Started Stage 3 for course {course_id}, task {task_id}{complexity_info}")
             return task_id
             
         except Exception as e:
@@ -541,97 +552,60 @@ class CourseGenerationService:
     def get_stage3_result(self, course_id: str) -> Optional[Dict[str, Any]]:
         """Get Stage 3 results"""
         try:
+            logger.info(f"get_stage3_result called with course_id: {course_id}")
             task_info = self._get_task_info(course_id)
             if not task_info:
+                logger.warning(f"No task info found for course_id: {course_id}")
                 return None
             
             user_id = task_info['user_id']
+            logger.info(f"Found user_id: {user_id} for course_id: {course_id}")
             
-            # Try to load from saved paths file first
-            try:
-                course_dir = self._get_course_dir(user_id, course_id)
-                
-                # Construct path to learning paths file
-                learning_paths_file = course_dir / "pathway_building_paths.pkl"
-                
-                if learning_paths_file.exists():
-                    # Load learning paths from file
-                    with open(learning_paths_file, 'rb') as f:
-                        paths_data = pickle.load(f)
-                    
-                    # Check if the paths_data has the expected structure
-                    if not isinstance(paths_data, dict):
-                        logger.error(f"Loaded paths_data is not a dictionary: {type(paths_data)}")
-                        return None
-                        
-                    if 'paths' not in paths_data:
-                        logger.error(f"'paths' key not found in paths_data. Available keys: {list(paths_data.keys())}")
-                        return None
-                        
-                    learning_paths = paths_data['paths']
-                    
-                    if not learning_paths:
-                        logger.warning(f"Learning paths is empty for course {course_id}")
-                        return None
-                    
-                    # Convert to PathwaySummary objects
-                    pathways = []
-                    for i, path in enumerate(learning_paths):
-                        try:
-                            # For each pathway, include full module data with learning objectives and linked documents
-                            full_modules = []
-                            for m in path.modules:
-                                # Create a dictionary with full module data (not just summary)
-                                module_data = {
-                                    'module_id': getattr(m, 'module_id', f'module-{i}-{len(full_modules)}'),
-                                    'title': m.title,
-                                    'description': m.description,
-                                    'theme': m.theme,
-                                    'target_complexity': m.target_complexity.value if hasattr(m.target_complexity, 'value') else str(m.target_complexity),
-                                    'learning_objectives': getattr(m, 'learning_objectives', []),
-                                    'linked_documents': getattr(m, 'linked_documents', [])
-                                }
-                                full_modules.append(module_data)
-                            
-                            pathways.append({
-                                'index': i,
-                                'title': path.title,
-                                'description': path.description,
-                                'complexity': path.target_complexity.value if hasattr(path.target_complexity, 'value') else str(path.target_complexity),
-                                'module_count': len(path.modules),
-                                'modules': full_modules  # Use full module data instead of ModuleSummary
-                            })
-                        except Exception as path_error:
-                            logger.error(f"Error processing pathway {i}: {path_error}")
-                            continue
-                    
-                    # Get document tree summary safely
-                    document_tree_summary = paths_data.get('document_tree_summary', {})
-                    
-                    return {
-                        'pathways': pathways,
-                        'total_documents': document_tree_summary.get('total_documents', 0),
-                        'repo_name': document_tree_summary.get('repo_name', 'Unknown')
+            # Load from saved stage result
+            course_dir = self._get_course_dir(user_id, course_id)
+            stage3_file = course_dir / "pathway_building.pkl"
+            
+            logger.info(f"Looking for Stage 3 file at: {stage3_file}")
+            if not stage3_file.exists():
+                logger.warning(f"Stage 3 result file not found: {stage3_file}")
+                return None
+            
+            with open(stage3_file, 'rb') as f:
+                stage3_result = pickle.load(f)
+            
+            if not isinstance(stage3_result, Stage3Result):
+                logger.error(f"Invalid stage3_result type: {type(stage3_result)}")
+                return None
+            
+            # Convert to frontend response format
+            pathways = []
+            for i, path in enumerate(stage3_result.learning_paths):
+                full_modules = []
+                for m in path.modules:
+                    module_data = {
+                        'module_id': getattr(m, 'module_id', f'module-{i}-{len(full_modules)}'),
+                        'title': m.title,
+                        'description': m.description,
+                        'theme': getattr(m, 'theme', 'General'),
+                        'target_complexity': path.target_complexity.value,  # Use path's complexity, not module's
+                        'learning_objectives': getattr(m, 'learning_objectives', []),
+                        'linked_documents': getattr(m, 'documents', [])  # Use 'documents' from LearningModule model
                     }
-            except Exception as e:
-                logger.warning(f"Could not load from paths file, falling back to Celery result: {e}")
-            
-            # Fall back to loading from Celery result
-            celery_result = self.celery_app.AsyncResult(task_info['task_id'])
-            
-            if celery_result.state != 'SUCCESS':
-                return None
-            
-            result = celery_result.result
-            if not result.get('success'):
-                return None
-            
-            pathways_data = result['pathways']
+                    full_modules.append(module_data)
+                
+                pathways.append({
+                    'index': i,
+                    'title': path.title,
+                    'description': path.description,
+                    'complexity': path.target_complexity.value,
+                    'module_count': len(path.modules),
+                    'modules': full_modules
+                })
             
             return {
-                'pathways': pathways_data,
-                'total_documents': result.get('total_documents', 0),
-                'repo_name': result.get('repo_name', 'Unknown')
+                'pathways': pathways,
+                'total_documents': len(stage3_result.stage2_result.document_analyses) if stage3_result.stage2_result else 0,
+                'repo_name': getattr(stage3_result.stage2_result, 'repo_name', 'Unknown') if stage3_result.stage2_result else 'Unknown'
             }
             
         except Exception as e:
@@ -796,46 +770,79 @@ class CourseGenerationService:
                 return False
             
             user_id = task_info['user_id']
-            
             course_dir = self._get_course_dir(user_id, course_id)
             
-            # Construct path to learning paths file
-            learning_paths_file = course_dir / "pathway_building_paths.pkl"
+            # Try the new file structure first (pathway_building.pkl)
+            pathway_file = course_dir / "pathway_building.pkl"
             
-            if not learning_paths_file.exists():
-                logger.error(f"Learning paths file not found: {learning_paths_file}")
-                return False
-            
-            # Load learning paths
-            with open(learning_paths_file, 'rb') as f:
-                paths_data = pickle.load(f)
-                learning_paths = paths_data['paths']
-            
-            # Validate pathway index
-            if pathway_index < 0 or pathway_index >= len(learning_paths):
-                logger.error(f"Invalid pathway index {pathway_index}")
-                return False
-            
-            # Update pathway fields
-            pathway = learning_paths[pathway_index]
-            if pathway_updates.title is not None:
-                pathway.title = pathway_updates.title
-            if pathway_updates.description is not None:
-                pathway.description = pathway_updates.description
-            if pathway_updates.target_complexity is not None:
-                pathway.target_complexity = pathway_updates.target_complexity
-            if pathway_updates.estimated_duration is not None:
-                pathway.estimated_duration = pathway_updates.estimated_duration
-            if pathway_updates.prerequisites is not None:
-                pathway.prerequisites = pathway_updates.prerequisites
-            
-            # Save updated learning paths back to file
-            paths_data['paths'] = learning_paths
-            with open(learning_paths_file, 'wb') as f:
-                pickle.dump(paths_data, f)
-            
-            logger.info(f"Successfully updated pathway {pathway_index} for course {course_id}")
-            return True
+            if pathway_file.exists():
+                # Load Stage3Result (new structure)
+                with open(pathway_file, 'rb') as f:
+                    stage3_result = pickle.load(f)
+                
+                # Validate pathway index
+                if pathway_index < 0 or pathway_index >= len(stage3_result.learning_paths):
+                    logger.error(f"Invalid pathway index {pathway_index}")
+                    return False
+                
+                # Update pathway fields
+                pathway = stage3_result.learning_paths[pathway_index]
+                if pathway_updates.title is not None:
+                    pathway.title = pathway_updates.title
+                if pathway_updates.description is not None:
+                    pathway.description = pathway_updates.description
+                if pathway_updates.target_complexity is not None:
+                    pathway.target_complexity = pathway_updates.target_complexity
+                if hasattr(pathway, 'estimated_duration') and pathway_updates.estimated_duration is not None:
+                    pathway.estimated_duration = pathway_updates.estimated_duration
+                if hasattr(pathway, 'prerequisites') and pathway_updates.prerequisites is not None:
+                    pathway.prerequisites = pathway_updates.prerequisites
+                
+                # Save updated Stage3Result back to file
+                with open(pathway_file, 'wb') as f:
+                    pickle.dump(stage3_result, f)
+                
+                logger.info(f"Successfully updated pathway {pathway_index} for course {course_id}")
+                return True
+                
+            else:
+                # Fallback to old file structure (pathway_building_paths.pkl)
+                learning_paths_file = course_dir / "pathway_building_paths.pkl"
+                
+                if not learning_paths_file.exists():
+                    logger.error(f"Learning paths file not found: neither {pathway_file} nor {learning_paths_file} exists")
+                    return False
+                
+                # Load learning paths (old structure)
+                with open(learning_paths_file, 'rb') as f:
+                    paths_data = pickle.load(f)
+                    learning_paths = paths_data['paths']
+                
+                # Validate pathway index
+                if pathway_index < 0 or pathway_index >= len(learning_paths):
+                    logger.error(f"Invalid pathway index {pathway_index}")
+                    return False
+                
+                # Update pathway fields
+                pathway = learning_paths[pathway_index]
+                if pathway_updates.title is not None:
+                    pathway.title = pathway_updates.title
+                if pathway_updates.description is not None:
+                    pathway.description = pathway_updates.description
+                if pathway_updates.target_complexity is not None:
+                    pathway.target_complexity = pathway_updates.target_complexity
+                if pathway_updates.estimated_duration is not None:
+                    pathway.estimated_duration = pathway_updates.estimated_duration
+                if pathway_updates.prerequisites is not None:
+                    pathway.prerequisites = pathway_updates.prerequisites
+                
+                # Save updated learning paths back to file
+                paths_data['paths'] = learning_paths
+                with open(learning_paths_file, 'wb') as f:
+                    pickle.dump(paths_data, f)
+                
+                logger.info(f"Successfully updated pathway {pathway_index} for course {course_id}")
+                return True
                 
         except Exception as e:
             logger.error(f"Failed to update pathway for course {course_id}: {e}")
@@ -854,50 +861,108 @@ class CourseGenerationService:
             user_id = task_info['user_id']
             course_dir = self._get_course_dir(user_id, course_id)
             
-            # Construct path to learning paths file
-            learning_paths_file = course_dir / "pathway_building_paths.pkl"
+            # Try the new file structure first (pathway_building.pkl)
+            pathway_file = course_dir / "pathway_building.pkl"
             
-            if not learning_paths_file.exists():
-                logger.error(f"Learning paths file not found: {learning_paths_file}")
-                return False
-            
-            # Load learning paths
-            with open(learning_paths_file, 'rb') as f:
-                paths_data = pickle.load(f)
-                learning_paths = paths_data['paths']
-            
-            # Validate indices
-            if pathway_index < 0 or pathway_index >= len(learning_paths):
-                logger.error(f"Invalid pathway index {pathway_index}")
-                return False
-            
-            pathway = learning_paths[pathway_index]
-            if module_index < 0 or module_index >= len(pathway.modules):
-                logger.error(f"Invalid module index {module_index}")
-                return False
-            
-            # Update module fields
-            module = pathway.modules[module_index]
-            if module_updates.title is not None:
-                module.title = module_updates.title
-            if module_updates.description is not None:
-                module.description = module_updates.description
-            if module_updates.learning_objectives is not None:
-                module.learning_objectives = module_updates.learning_objectives
-            if module_updates.linked_documents is not None:
-                module.linked_documents = module_updates.linked_documents
-            if module_updates.theme is not None:
-                module.theme = module_updates.theme
-            if module_updates.target_complexity is not None:
-                module.target_complexity = module_updates.target_complexity
-            
-            # Save updated learning paths back to file
-            paths_data['paths'] = learning_paths
-            with open(learning_paths_file, 'wb') as f:
-                pickle.dump(paths_data, f)
-            
-            logger.info(f"Successfully updated module {module_index} in pathway {pathway_index} for course {course_id}")
-            return True
+            if pathway_file.exists():
+                # Load Stage3Result (new structure)
+                with open(pathway_file, 'rb') as f:
+                    stage3_result = pickle.load(f)
+                
+                # Validate indices
+                if pathway_index < 0 or pathway_index >= len(stage3_result.learning_paths):
+                    logger.error(f"Invalid pathway index {pathway_index}")
+                    return False
+                
+                pathway = stage3_result.learning_paths[pathway_index]
+                if module_index < 0 or module_index >= len(pathway.modules):
+                    logger.error(f"Invalid module index {module_index}")
+                    return False
+                
+                # Update module fields
+                module = pathway.modules[module_index]
+                if module_updates.title is not None:
+                    module.title = module_updates.title
+                if module_updates.description is not None:
+                    module.description = module_updates.description
+                if module_updates.learning_objectives is not None:
+                    module.learning_objectives = module_updates.learning_objectives
+                # Handle both documents and linked_documents for backward compatibility
+                if hasattr(module_updates, 'documents') and module_updates.documents is not None:
+                    module.documents = module_updates.documents
+                elif hasattr(module_updates, 'linked_documents') and module_updates.linked_documents is not None:
+                    module.documents = module_updates.linked_documents
+                if hasattr(module_updates, 'theme') and module_updates.theme is not None:
+                    if hasattr(module, 'theme'):
+                        module.theme = module_updates.theme
+                if hasattr(module_updates, 'target_complexity') and module_updates.target_complexity is not None:
+                    if hasattr(module, 'target_complexity'):
+                        module.target_complexity = module_updates.target_complexity
+                
+                # Save updated Stage3Result back to file
+                with open(pathway_file, 'wb') as f:
+                    pickle.dump(stage3_result, f)
+                
+                logger.info(f"Successfully updated module {module_index} in pathway {pathway_index} for course {course_id}")
+                return True
+                
+            else:
+                # Fallback to old file structure (pathway_building_paths.pkl)
+                learning_paths_file = course_dir / "pathway_building_paths.pkl"
+                
+                if not learning_paths_file.exists():
+                    logger.error(f"Learning paths file not found: neither {pathway_file} nor {learning_paths_file} exists")
+                    return False
+                
+                # Load learning paths (old structure)
+                with open(learning_paths_file, 'rb') as f:
+                    paths_data = pickle.load(f)
+                    learning_paths = paths_data['paths']
+                
+                # Validate indices
+                if pathway_index < 0 or pathway_index >= len(learning_paths):
+                    logger.error(f"Invalid pathway index {pathway_index}")
+                    return False
+                
+                pathway = learning_paths[pathway_index]
+                if module_index < 0 or module_index >= len(pathway.modules):
+                    logger.error(f"Invalid module index {module_index}")
+                    return False
+                
+                # Update module fields
+                module = pathway.modules[module_index]
+                if module_updates.title is not None:
+                    module.title = module_updates.title
+                if module_updates.description is not None:
+                    module.description = module_updates.description
+                if module_updates.learning_objectives is not None:
+                    module.learning_objectives = module_updates.learning_objectives
+                # Handle both documents and linked_documents for backward compatibility
+                if hasattr(module_updates, 'documents') and module_updates.documents is not None:
+                    if hasattr(module, 'documents'):
+                        module.documents = module_updates.documents
+                    else:
+                        module.linked_documents = module_updates.documents
+                elif hasattr(module_updates, 'linked_documents') and module_updates.linked_documents is not None:
+                    if hasattr(module, 'documents'):
+                        module.documents = module_updates.linked_documents
+                    else:
+                        module.linked_documents = module_updates.linked_documents
+                if hasattr(module_updates, 'theme') and module_updates.theme is not None:
+                    if hasattr(module, 'theme'):
+                        module.theme = module_updates.theme
+                if hasattr(module_updates, 'target_complexity') and module_updates.target_complexity is not None:
+                    if hasattr(module, 'target_complexity'):
+                        module.target_complexity = module_updates.target_complexity
+                
+                # Save updated learning paths back to file
+                paths_data['paths'] = learning_paths
+                with open(learning_paths_file, 'wb') as f:
+                    pickle.dump(paths_data, f)
+                
+                logger.info(f"Successfully updated module {module_index} in pathway {pathway_index} for course {course_id}")
+                return True
+                
         except Exception as e:
             logger.error(f"Failed to update module for course {course_id}: {e}")
             import traceback
@@ -918,59 +983,101 @@ class CourseGenerationService:
             # Load the learning paths
             course_dir = self._get_course_dir(user_id, course_id)
             
-            learning_paths_file = course_dir / "pathway_building_paths.pkl"
+            # Try the new file structure first (pathway_building.pkl)
+            pathway_file = course_dir / "pathway_building.pkl"
             
-            if not learning_paths_file.exists():
-                logger.error(f"Learning paths file not found: {learning_paths_file}")
-                return False
-            
-            # Load learning paths
-            with open(learning_paths_file, 'rb') as f:
-                paths_data = pickle.load(f)
-                learning_paths = paths_data['paths']
-            
-            # Validate pathway index
-            if pathway_index < 0 or pathway_index >= len(learning_paths):
-                logger.error(f"Invalid pathway index {pathway_index}")
-                return False
-            
-            pathway = learning_paths[pathway_index]
-            
-            # Create new module ID
-            existing_ids = [m.module_id for m in pathway.modules]
-            new_id = f"module_{len(pathway.modules) + 1:02d}"
-            while new_id in existing_ids:
-                new_id = f"module_{len(existing_ids) + 1:02d}"
-            
-            # Create assessment for new module
-            assessment = AssessmentPoint(
-                assessment_id=f"{new_id}_assessment",
-                title=f"{module_data.title} Assessment",
-                concepts_to_assess=[module_data.theme.lower()]
-            )
-            
-            # Create new module
-            new_module = LearningModule(
-                module_id=new_id,
-                title=module_data.title,
-                description=module_data.description,
-                learning_objectives=module_data.learning_objectives,
-                linked_documents=module_data.linked_documents,
-                theme=module_data.theme,
-                target_complexity=module_data.target_complexity,
-                assessment=assessment
-            )
-            
-            # Add module to pathway
-            pathway.modules.append(new_module)
-            
-            # Save updated learning paths back to file
-            paths_data['paths'] = learning_paths
-            with open(learning_paths_file, 'wb') as f:
-                pickle.dump(paths_data, f)
-            
-            logger.info(f"Successfully created new module in pathway {pathway_index} for course {course_id}")
-            return True
+            if pathway_file.exists():
+                # Load Stage3Result (new structure)
+                with open(pathway_file, 'rb') as f:
+                    stage3_result = pickle.load(f)
+                
+                # Validate pathway index
+                if pathway_index < 0 or pathway_index >= len(stage3_result.learning_paths):
+                    logger.error(f"Invalid pathway index {pathway_index}")
+                    return False
+                
+                pathway = stage3_result.learning_paths[pathway_index]
+                
+                # Create new module ID
+                existing_ids = [getattr(m, 'module_id', f'module_{i}') for i, m in enumerate(pathway.modules)]
+                new_id = f"module_{len(pathway.modules) + 1:02d}"
+                while new_id in existing_ids:
+                    new_id = f"module_{len(existing_ids) + 1:02d}"
+                
+                # Create new module
+                new_module = LearningModule(
+                    module_id=new_id,
+                    title=module_data.title,
+                    description=module_data.description,
+                    learning_objectives=module_data.learning_objectives,
+                    documents=module_data.linked_documents  # Use 'documents' for LearningModule
+                )
+                
+                # Add module to pathway
+                pathway.modules.append(new_module)
+                
+                # Save updated Stage3Result back to file
+                with open(pathway_file, 'wb') as f:
+                    pickle.dump(stage3_result, f)
+                
+                logger.info(f"Successfully created new module in pathway {pathway_index} for course {course_id}")
+                return True
+                
+            else:
+                # Fallback to old file structure (pathway_building_paths.pkl)
+                learning_paths_file = course_dir / "pathway_building_paths.pkl"
+                
+                if not learning_paths_file.exists():
+                    logger.error(f"Learning paths file not found: neither {pathway_file} nor {learning_paths_file} exists")
+                    return False
+                
+                # Load learning paths (old structure)
+                with open(learning_paths_file, 'rb') as f:
+                    paths_data = pickle.load(f)
+                    learning_paths = paths_data['paths']
+                
+                # Validate pathway index
+                if pathway_index < 0 or pathway_index >= len(learning_paths):
+                    logger.error(f"Invalid pathway index {pathway_index}")
+                    return False
+                
+                pathway = learning_paths[pathway_index]
+                
+                # Create new module ID
+                existing_ids = [m.module_id for m in pathway.modules]
+                new_id = f"module_{len(pathway.modules) + 1:02d}"
+                while new_id in existing_ids:
+                    new_id = f"module_{len(existing_ids) + 1:02d}"
+                
+                # Create assessment for new module
+                assessment = AssessmentPoint(
+                    assessment_id=f"{new_id}_assessment",
+                    title=f"{module_data.title} Assessment",
+                    concepts_to_assess=[module_data.theme.lower()]
+                )
+                
+                # Create new module
+                new_module = LearningModule(
+                    module_id=new_id,
+                    title=module_data.title,
+                    description=module_data.description,
+                    learning_objectives=module_data.learning_objectives,
+                    linked_documents=module_data.linked_documents,
+                    theme=module_data.theme,
+                    target_complexity=module_data.target_complexity,
+                    assessment=assessment
+                )
+                
+                # Add module to pathway
+                pathway.modules.append(new_module)
+                
+                # Save updated learning paths back to file
+                paths_data['paths'] = learning_paths
+                with open(learning_paths_file, 'wb') as f:
+                    pickle.dump(paths_data, f)
+                
+                logger.info(f"Successfully created new module in pathway {pathway_index} for course {course_id}")
+                return True
             
         except Exception as e:
             logger.error(f"Failed to create module for course {course_id}: {e}")
@@ -991,38 +1098,67 @@ class CourseGenerationService:
             # Load the learning paths
             course_dir = self._get_course_dir(user_id, course_id)
             
-            # Construct path to learning paths file
-            learning_paths_file = course_dir / "pathway_building_paths.pkl"
+            # Try the new file structure first (pathway_building.pkl)
+            pathway_file = course_dir / "pathway_building.pkl"
             
-            if not learning_paths_file.exists():
-                logger.error(f"Learning paths file not found: {learning_paths_file}")
-                return False
+            if pathway_file.exists():
+                # Load Stage3Result (new structure)
+                with open(pathway_file, 'rb') as f:
+                    stage3_result = pickle.load(f)
+                
+                # Validate indices
+                if pathway_index < 0 or pathway_index >= len(stage3_result.learning_paths):
+                    logger.error(f"Invalid pathway index {pathway_index}")
+                    return False
+                
+                pathway = stage3_result.learning_paths[pathway_index]
+                if module_index < 0 or module_index >= len(pathway.modules):
+                    logger.error(f"Invalid module index {module_index}")
+                    return False
+                
+                # Remove module from pathway
+                removed_module = pathway.modules.pop(module_index)
+                
+                # Save updated Stage3Result back to file
+                with open(pathway_file, 'wb') as f:
+                    pickle.dump(stage3_result, f)
+                
+                logger.info(f"Successfully deleted module '{removed_module.title}' from pathway {pathway_index} for course {course_id}")
+                return True
             
-            # Load learning paths
-            with open(learning_paths_file, 'rb') as f:
-                paths_data = pickle.load(f)
-                learning_paths = paths_data['paths']
-            
-            # Validate indices
-            if pathway_index < 0 or pathway_index >= len(learning_paths):
-                logger.error(f"Invalid pathway index {pathway_index}")
-                return False
-            
-            pathway = learning_paths[pathway_index]
-            if module_index < 0 or module_index >= len(pathway.modules):
-                logger.error(f"Invalid module index {module_index}")
-                return False
-            
-            # Remove module from pathway
-            removed_module = pathway.modules.pop(module_index)
-            
-            # Save updated learning paths back to file
-            paths_data['paths'] = learning_paths
-            with open(learning_paths_file, 'wb') as f:
-                pickle.dump(paths_data, f)
-            
-            logger.info(f"Successfully deleted module '{removed_module.title}' from pathway {pathway_index} for course {course_id}")
-            return True
+            else:
+                # Fallback to old file structure (pathway_building_paths.pkl)
+                learning_paths_file = course_dir / "pathway_building_paths.pkl"
+                
+                if not learning_paths_file.exists():
+                    logger.error(f"Learning paths file not found: neither {pathway_file} nor {learning_paths_file} exists")
+                    return False
+                
+                # Load learning paths (old structure)
+                with open(learning_paths_file, 'rb') as f:
+                    paths_data = pickle.load(f)
+                    learning_paths = paths_data['paths']
+                
+                # Validate indices
+                if pathway_index < 0 or pathway_index >= len(learning_paths):
+                    logger.error(f"Invalid pathway index {pathway_index}")
+                    return False
+                
+                pathway = learning_paths[pathway_index]
+                if module_index < 0 or module_index >= len(pathway.modules):
+                    logger.error(f"Invalid module index {module_index}")
+                    return False
+                
+                # Remove module from pathway
+                removed_module = pathway.modules.pop(module_index)
+                
+                # Save updated learning paths back to file
+                paths_data['paths'] = learning_paths
+                with open(learning_paths_file, 'wb') as f:
+                    pickle.dump(paths_data, f)
+                
+                logger.info(f"Successfully deleted module '{removed_module.title}' from pathway {pathway_index} for course {course_id}")
+                return True
                 
         except Exception as e:
             logger.error(f"Failed to delete module for course {course_id}: {e}")
@@ -1043,24 +1179,23 @@ class CourseGenerationService:
             # Load the learning paths
             course_dir = self._get_course_dir(user_id, course_id)
             
-            # Construct path to learning paths file
-            learning_paths_file = course_dir / "pathway_building_paths.pkl"
+            # Look for the single pathway file (new structure)
+            pathway_file = course_dir / "pathway_building.pkl"
             
-            if not learning_paths_file.exists():
-                logger.error(f"Learning paths file not found: {learning_paths_file}")
+            if not pathway_file.exists():
+                logger.error(f"Learning paths file not found: {pathway_file}")
                 return False
             
-            # Load learning paths
-            with open(learning_paths_file, 'rb') as f:
-                paths_data = pickle.load(f)
-                learning_paths = paths_data['paths']
+            # Load Stage3Result
+            with open(pathway_file, 'rb') as f:
+                stage3_result = pickle.load(f)
             
             # Validate pathway index
-            if pathway_index < 0 or pathway_index >= len(learning_paths):
+            if pathway_index < 0 or pathway_index >= len(stage3_result.learning_paths):
                 logger.error(f"Invalid pathway index {pathway_index}")
                 return False
             
-            pathway = learning_paths[pathway_index]
+            pathway = stage3_result.learning_paths[pathway_index]
             
             # Validate module order
             if len(module_order) != len(pathway.modules):
@@ -1075,18 +1210,18 @@ class CourseGenerationService:
             original_modules = pathway.modules.copy()
             pathway.modules = [original_modules[i] for i in module_order]
             
-            # Update module IDs to reflect new positions
+            # Update module IDs to reflect new positions (if the module has module_id)
             for new_index, module in enumerate(pathway.modules):
-                new_module_id = f"module_{new_index + 1:02d}"
-                module.module_id = new_module_id
+                if hasattr(module, 'module_id'):
+                    new_module_id = f"module_{new_index + 1:02d}_{module.title.lower().replace(' ', '_')}"
+                    module.module_id = new_module_id
                 # Also update assessment ID if it exists
                 if hasattr(module, 'assessment') and module.assessment:
                     module.assessment.assessment_id = f"{new_module_id}_assessment"
             
-            # Save updated learning paths back to file
-            paths_data['paths'] = learning_paths
-            with open(learning_paths_file, 'wb') as f:
-                pickle.dump(paths_data, f)
+            # Save updated Stage3Result back to file
+            with open(pathway_file, 'wb') as f:
+                pickle.dump(stage3_result, f)
             
             logger.info(f"Successfully reordered modules in pathway {pathway_index} for course {course_id}")
             return True

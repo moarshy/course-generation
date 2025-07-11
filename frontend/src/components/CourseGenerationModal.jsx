@@ -193,7 +193,7 @@ const CourseGenerationModal = ({ isOpen, onClose, course }) => {
           <Stage2Component
             course={course}
             taskStatus={taskStatus}
-            onNext={() => handleStage3()}
+            onNext={() => setCurrentStage('pathway_building')}
           />
         );
       case 'pathway_building':

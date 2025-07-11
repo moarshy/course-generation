@@ -11,14 +11,15 @@ from datetime import datetime
 
 from backend.shared.models import (
     CourseGenerationStage, 
-    Stage2Result, Stage3Result, Stage4Result, Stage4UserInput,
-    ComplexityLevel, DocumentTree, GroupedLearningPath, GeneratedCourse,
-    GeneratedCourse, DocumentMetadata, DocumentNode, DocumentAnalysis
+    Stage2Result, Stage3Result, Stage4Result, Stage3UserInput, Stage4UserInput,
+    ComplexityLevel, DocumentTree, LearningPath, GeneratedCourse,
+    DocumentMetadata, DocumentNode, DocumentAnalysis
 )
 from backend.shared.utils import StageDataManager
 from backend.worker.course_content_agent.modules import LearningPathGenerator, CourseGenerator, CourseExporter
 from backend.worker.agents.s1_repo_cloner import process_stage1
 from backend.worker.agents.s2_document_analyzer import process_stage2
+from backend.worker.agents.s3_learning_pathway_generator import process_stage3
 from backend.core.config import settings
 
 # Load environment variables
@@ -64,6 +65,8 @@ def get_stage_manager(user_id: str, course_id: str) -> StageDataManager:
     base_dir = Path(settings.ROOT_DATA_DIR) / user_id.replace('|', '_').replace('/', '_')
     return StageDataManager(base_dir, course_id)
 
+
+
 @app.task(bind=True)
 def stage1_clone_repository(self, user_id: str, course_id: str, repo_url: str) -> Dict[str, Any]:
     """Stage 1: Clone repository and analyze structure"""
@@ -100,6 +103,8 @@ def stage1_clone_repository(self, user_id: str, course_id: str, repo_url: str) -
             'stage': CourseGenerationStage.CLONE_REPO.value,
             'error': str(e)
         }
+
+
 
 def convert_stage2_to_document_tree(stage2_result: Stage2Result, stage1_result) -> DocumentTree:
     """Convert Stage2Result to DocumentTree format expected by frontend"""
@@ -225,169 +230,63 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
         }
 
 @app.task(bind=True)
-def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any]:
-    """Stage 3: Generate learning pathways for user selection"""
+def stage3_pathway_building(self, user_id: str, course_id: str, user_input: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Stage 3: Generate learning pathways using debate agent"""
     try:
-        logger.info(f"Starting Stage 3 for course {course_id}: pathway building")
+        logger.info(f"Starting Stage 3 pathway building for course {course_id}")
         
-        # Initialize Redis progress tracking
-        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
-        progress_key = f"stage3_progress:{course_id}"
+        # Parse user input
+        if user_input:
+            stage3_input = Stage3UserInput(**user_input)
+        else:
+            stage3_input = Stage3UserInput()
+        
+        logger.info(f"Stage 3 input: complexity_level={stage3_input.complexity_level}, additional_instructions={stage3_input.additional_instructions}")
         
         # Get stage manager
         stage_manager = get_stage_manager(user_id, course_id)
         
-        # Load previous stage data
-        stage2_result = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS, suffix="result")
-        document_tree: DocumentTree = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS)
+        # Load Stage 2 result from stage manager
+        stage2_result = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS)
         
-        # Get overview context if available
-        overview_context = ""
-        if stage2_result.overview_doc:
-            stage1_result = stage_manager.load_stage_data(CourseGenerationStage.CLONE_REPO)
-            overview_path = Path(stage1_result.repo_path) / stage2_result.overview_doc
-            if overview_path.exists():
-                with open(overview_path, 'r', encoding='utf-8') as f:
-                    overview_context = get_n_words(f.read(), OVERVIEW_DOC_MAX_WORDS)
+        if not stage2_result:
+            raise ValueError(f"Stage 2 result not found for course {course_id}")
         
-        # Initialize progress data
-        complexities = [ComplexityLevel.BEGINNER, ComplexityLevel.INTERMEDIATE, ComplexityLevel.ADVANCED]
-        complexity_names = [c.value.upper() for c in complexities]
+        # Determine target complexity
+        try:
+            target_complexity = ComplexityLevel(stage3_input.complexity_level.lower())
+        except ValueError:
+            logger.warning(f"Invalid complexity level: {stage3_input.complexity_level}, defaulting to intermediate")
+            target_complexity = ComplexityLevel.INTERMEDIATE
         
-        progress_data = {
-            'stage': 'initializing',
-            'stage_description': 'Preparing to generate learning pathways',
-            'total_pathways': len(complexities),
-            'generated_pathways': 0,
-            'current_complexity': '',
-            'completed_complexities': [],
-            'updated_at': datetime.now().isoformat()
-        }
-        redis_client.set(progress_key, json.dumps(progress_data))
-        
-        # Update progress: starting pathway generation
-        progress_data.update({
-            'stage': 'generating_pathways',
-            'stage_description': 'Generating learning pathways for different complexity levels',
-            'updated_at': datetime.now().isoformat()
-        })
-        redis_client.set(progress_key, json.dumps(progress_data))
-        
-        # Generate learning pathways with progress updates
-        path_generator = LearningPathGenerator()
-        learning_paths = []
-        
-        # Get all documents (no complexity filtering - let LLM decide)
-        all_documents = list(document_tree.nodes.values())
-        
-        if not all_documents:
-            logger.warning("No documents found for learning path generation")
-            # Update progress with error
-            progress_data.update({
-                'stage': 'failed',
-                'stage_description': 'No documents found for pathway generation',
-                'error': 'No documents available',
-                'updated_at': datetime.now().isoformat()
-            })
-            redis_client.set(progress_key, json.dumps(progress_data))
-            return {
-                'success': False,
-                'stage': CourseGenerationStage.PATHWAY_BUILDING.value,
-                'error': 'No documents found for learning path generation'
-            }
-        
-        logger.info(f"Generating learning paths for {len(all_documents)} documents")
-        
-        for i, complexity in enumerate(complexities):
-            complexity_name = complexity.value.upper()
-            
-            # Update current complexity being processed
-            progress_data.update({
-                'current_complexity': complexity_name,
-                'generated_pathways': i,
-                'updated_at': datetime.now().isoformat()
-            })
-            redis_client.set(progress_key, json.dumps(progress_data))
-            
-            try:
-                logger.info(f"Generating {complexity_name} complexity pathway...")
-                
-                # Generate learning path for this complexity level using the forward method directly
-                grouped_path = path_generator.forward(
-                    documents=all_documents,
-                    complexity=complexity,
-                    repo_name=document_tree.repo_name or "Documentation",
-                    overview_context=overview_context
-                )
-                
-                if grouped_path:
-                    learning_paths.append(grouped_path)
-                    logger.info(f"Generated {complexity_name} pathway with {len(grouped_path.modules)} modules")
-                else:
-                    logger.warning(f"No pathway generated for {complexity_name} level")
-                
-                # Mark as completed
-                progress_data['completed_complexities'].append(complexity_name)
-                progress_data.update({
-                    'generated_pathways': i + 1,
-                    'updated_at': datetime.now().isoformat()
-                })
-                redis_client.set(progress_key, json.dumps(progress_data))
-                
-            except Exception as e:
-                logger.error(f"Error generating learning path for {complexity_name}: {e}")
-                # Continue with other complexity levels
-                continue
-        
-        # Mark as completed
-        progress_data.update({
-            'stage': 'completed',
-            'stage_description': 'Learning pathways generated successfully',
-            'current_complexity': '',
-            'updated_at': datetime.now().isoformat()
-        })
-        redis_client.set(progress_key, json.dumps(progress_data))
-        
-        # Create stage 3 result
-        stage3_result = Stage3Result(
-            learning_paths_path="",  # Will be set after saving
+        # Call the new Stage 3 agent
+        stage3_result = process_stage3(
+            stage2_result=stage2_result,
+            target_complexity=target_complexity,
+            additional_instructions=stage3_input.additional_instructions,
+            task_id=self.request.id,
+            redis_client=redis_client
         )
         
-        # Save learning paths with suffix to avoid overwriting
-        paths_data = {
-            'paths': learning_paths,
-            'document_tree_summary': {
-                'total_documents': len(document_tree.nodes),
-                'repo_name': document_tree.repo_name
-            }
-        }
-        
-        paths_path = stage_manager.save_stage_data(
-            CourseGenerationStage.PATHWAY_BUILDING, paths_data, suffix="paths"
-        )
-        stage3_result.learning_paths_path = paths_path
+        if not stage3_result or not stage3_result.learning_paths:
+            raise ValueError("No learning paths generated")
         
         # Save stage result
-        stage_manager.save_stage_data(
-            CourseGenerationStage.PATHWAY_BUILDING, stage3_result, suffix="result"
-        )
+        stage_manager.save_stage_data(CourseGenerationStage.PATHWAY_BUILDING, stage3_result)
         
         # Prepare response with pathway summaries
         pathway_summaries = []
-        for i, path in enumerate(learning_paths):
+        for i, path in enumerate(stage3_result.learning_paths):
             pathway_summaries.append({
                 'index': i,
                 'title': path.title,
                 'description': path.description,
-                'complexity': path.target_complexity.value if hasattr(path.target_complexity, 'value') else str(path.target_complexity),
+                'complexity': path.target_complexity.value,
                 'module_count': len(path.modules),
-                'modules': [{'title': m.title, 'theme': m.theme, 'description': m.description} for m in path.modules]
+                'modules': [{'title': m.title, 'theme': getattr(m, 'theme', 'General'), 'description': m.description} for m in path.modules]
             })
         
-        # Clean up progress data after completion
-        redis_client.delete(progress_key)
-        
-        logger.info(f"Stage 3 completed for course {course_id}")
+        logger.info(f"Stage 3 completed for course {course_id}: {len(stage3_result.learning_paths)} pathways generated")
         return {
             'success': True,
             'stage': CourseGenerationStage.PATHWAY_BUILDING.value,
@@ -401,7 +300,6 @@ def stage3_pathway_building(self, user_id: str, course_id: str) -> Dict[str, Any
         
         # Update progress with error
         try:
-            redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
             progress_key = f"stage3_progress:{course_id}"
             progress_data = {
                 'stage': 'failed',
@@ -534,19 +432,12 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         })
         redis_client.set(progress_key, json.dumps(progress_data))
         
-        # Load previous stage data with debugging
+        # Load previous stage data
         logger.info("Loading Stage 3 data...")
-        # Load the paths data with the correct suffix
-        stage3_data = stage_manager.load_stage_data(CourseGenerationStage.PATHWAY_BUILDING, suffix="paths")
-        logger.info(f"Stage 3 data loaded: {stage3_data is not None}")
-        if stage3_data is None:
-            # Try without suffix for backward compatibility
-            logger.info("Trying to load Stage 3 data without suffix...")
-            stage3_data = stage_manager.load_stage_data(CourseGenerationStage.PATHWAY_BUILDING)
-            logger.info(f"Stage 3 data loaded (no suffix): {stage3_data is not None}")
-            if stage3_data is None:
+        stage3_result = stage_manager.load_stage_data(CourseGenerationStage.PATHWAY_BUILDING)
+        logger.info(f"Stage 3 data loaded: {stage3_result is not None}")
+        if stage3_result is None:
                 raise ValueError("Stage 3 data is None - pathway building data not found")
-        logger.info(f"Stage 3 data keys: {list(stage3_data.keys()) if isinstance(stage3_data, dict) else type(stage3_data)}")
         
         # Update progress: stage 3 data loaded
         progress_data.update({
@@ -556,7 +447,7 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         redis_client.set(progress_key, json.dumps(progress_data))
         
         logger.info("Loading Document Tree...")
-        document_tree: DocumentTree = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS)
+        document_tree: DocumentTree = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS, suffix="tree")
         logger.info(f"Document tree loaded: {document_tree is not None}")
         if document_tree is None:
             raise ValueError("Document tree is None - document analysis data not found")
@@ -568,108 +459,35 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         })
         redis_client.set(progress_key, json.dumps(progress_data))
         
-        logger.info("Loading Stage 2 result...")
-        stage2_result = stage_manager.load_stage_data(CourseGenerationStage.DOCUMENT_ANALYSIS, suffix="result")
-        logger.info(f"Stage 2 result loaded: {stage2_result is not None}")
-        if stage2_result is None:
-            raise ValueError("Stage 2 result is None - document analysis result not found")
-        
         # Get selected pathway
         logger.info("Getting learning paths...")
-        if 'paths' not in stage3_data:
-            raise ValueError(f"'paths' key not found in stage3_data. Available keys: {list(stage3_data.keys())}")
-        
-        learning_paths = stage3_data['paths']
-        logger.info(f"Learning paths found: {len(learning_paths) if learning_paths else 0}")
+        if not stage3_result.learning_paths:
+            raise ValueError("No learning paths found in Stage 3 result")
         
         if stage4_input.custom_pathway:
             logger.info("Using custom pathway from input")
             selected_pathway = stage4_input.custom_pathway
         else:
             logger.info("Using first pathway from generated paths")
-            selected_pathway = learning_paths[0] if learning_paths else None
+            selected_pathway = stage3_result.learning_paths[0]
         
-        logger.info(f"Selected pathway: {selected_pathway is not None}")
-        if not selected_pathway:
-            raise ValueError("No pathway available for course generation")
+        logger.info(f"Selected pathway: {selected_pathway.title}")
         
-        # Update progress: pathway selected, now we know total modules
+        # Update progress: pathway selected
         progress_data.update({
             'step_progress': 40,
             'updated_at': datetime.now().isoformat()
         })
         redis_client.set(progress_key, json.dumps(progress_data))
         
-        # Debug the selected pathway
-        logger.info(f"Selected pathway type: {type(selected_pathway)}")
-        logger.info(f"Selected pathway is dict: {isinstance(selected_pathway, dict)}")
-        if hasattr(selected_pathway, '__dict__'):
-            logger.info(f"Selected pathway attributes: {list(selected_pathway.__dict__.keys())}")
-        if hasattr(selected_pathway, 'pathway_id'):
-            logger.info(f"Selected pathway HAS pathway_id: {selected_pathway.pathway_id}")
-        else:
-            logger.warning("Selected pathway MISSING pathway_id attribute")
-            
-        # Convert dictionary back to GroupedLearningPath if needed
-        if isinstance(selected_pathway, dict):
-            logger.info("Converting pathway dictionary to GroupedLearningPath object")
-            logger.info(f"Pathway dictionary keys: {list(selected_pathway.keys())}")
-            logger.info(f"Pathway dictionary has pathway_id: {'pathway_id' in selected_pathway}")
-            
-            # If pathway_id is missing, add it
-            if 'pathway_id' not in selected_pathway:
-                logger.warning("pathway_id missing from dictionary, generating one")
-                selected_pathway['pathway_id'] = f"pathway_{selected_pathway.get('title', 'unknown').lower().replace(' ', '_')}"
-            
-            selected_pathway = GroupedLearningPath(**selected_pathway)
-            logger.info(f"Converted pathway - ID: {selected_pathway.pathway_id}")
-        elif not hasattr(selected_pathway, 'pathway_id'):
-            # It's a shared.models.GroupedLearningPath, convert to worker.course_content_agent.models.GroupedLearningPath
-            logger.warning("Converting shared.models.GroupedLearningPath to worker model")
-            
-            # Convert safely with proper field mapping
-            pathway_dict = selected_pathway.model_dump() if hasattr(selected_pathway, 'model_dump') else selected_pathway.__dict__
-            
-            # Add missing required fields
-            pathway_dict['pathway_id'] = f"pathway_{pathway_dict.get('title', 'unknown').lower().replace(' ', '_')}"
-            pathway_dict['welcome_message'] = pathway_dict.get('welcome_message', f"Welcome to {pathway_dict.get('title', 'this course')}!")
-            
-            # Remove fields that don't exist in worker model
-            pathway_dict.pop('estimated_duration', None)
-            pathway_dict.pop('prerequisites', None)
-            
-            # Fix modules - handle assessment field differences
-            if 'modules' in pathway_dict:
-                for module in pathway_dict['modules']:
-                    if isinstance(module, dict) and module.get('assessment') is None:
-                        # Create a basic assessment if missing
-                        module['assessment'] = {
-                            'assessment_id': f"{module.get('module_id', 'unknown')}_assessment",
-                            'title': f"{module.get('title', 'Module')} Assessment",
-                            'concepts_to_assess': module.get('learning_objectives', [])[:3]
-                        }
-            
-            selected_pathway = GroupedLearningPath(**pathway_dict)
-            logger.info(f"Converted pathway with ID: {selected_pathway.pathway_id}")
-        
         # Get overview context
         logger.info("Getting overview context...")
         overview_context = ""
-        if hasattr(stage2_result, 'overview_doc') and stage2_result.overview_doc:
-            logger.info("Loading Stage 1 result for overview...")
-            stage1_result = stage_manager.load_stage_data(CourseGenerationStage.CLONE_REPO)
-            logger.info(f"Stage 1 result loaded: {stage1_result is not None}")
-            if stage1_result is None:
-                raise ValueError("Stage 1 result is None - clone repo data not found")
-            
-            overview_path = Path(stage1_result.repo_path) / stage2_result.overview_doc
-            logger.info(f"Overview path: {overview_path}")
-            if overview_path.exists():
-                with open(overview_path, 'r', encoding='utf-8') as f:
-                    overview_context = get_n_words(f.read(), OVERVIEW_DOC_MAX_WORDS)
-                logger.info(f"Overview context loaded: {len(overview_context)} chars")
+        if stage3_result.stage2_result and stage3_result.stage2_result.overview_context:
+            overview_context = stage3_result.stage2_result.overview_context
+            logger.info(f"Overview context loaded: {len(overview_context)} chars")
         else:
-            logger.info("No overview document specified")
+            logger.info("No overview context available")
         
         # Update progress: preparing for course generation
         progress_data.update({
@@ -714,7 +532,7 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         exporter = CourseExporter()
         logger.info(f"Course exporter created: {exporter is not None}")
         
-        # Create export directory   
+        # Create export directory
         user_dir = Path(settings.ROOT_DATA_DIR) / user_id.replace('|', '_').replace('/', '_') / course_id
         export_dir = user_dir / "generated"
         logger.info(f"Export directory: {export_dir}")

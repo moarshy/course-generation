@@ -622,7 +622,7 @@ const CourseCreationPage = () => {
     
     const stageNames = {
       'repo': 'Document Analysis',
-      'analysis': 'Learning Pathways',
+      'analysis': 'Pathway Configuration',
       'pathways': 'Course Generation'
     };
     
@@ -644,10 +644,18 @@ const CourseCreationPage = () => {
           data || {},
           { headers: { Authorization: `Bearer ${token}` } }
         );
+        
+        // Move to Stage 2 and start polling
+        setCurrentStage('analysis');
+        showInfo(`🔄 Starting ${stageNames[stageId]}...`);
+        pollTaskStatus();
+      } else if (stageId === 'analysis') {
+        // Stage 2 → Stage 3: Just navigate without backend call
+        setCurrentStage('pathways');
+        return; // Don't show loading message or poll status
       } else {
-        // For other stages, use the normal flow
+        // For pathways → generation, make backend call
         const stageEndpoints = {
-          'analysis': '/stage3', 
           'pathways': '/stage4'
         };
         
@@ -659,17 +667,15 @@ const CourseCreationPage = () => {
             { headers: { Authorization: `Bearer ${token}` } }
           );
         }
+        
+        const nextStageMap = {
+          'pathways': 'generation'
+        };
+        
+        setCurrentStage(nextStageMap[stageId]);
+        showInfo(`🔄 Starting ${stageNames[stageId]}...`);
+        pollTaskStatus();
       }
-      
-      const nextStageMap = {
-        'repo': 'analysis',
-        'analysis': 'pathways',
-        'pathways': 'generation'
-      };
-      
-      setCurrentStage(nextStageMap[stageId]);
-      showInfo(`🔄 Starting ${stageNames[stageId]}...`);
-      pollTaskStatus();
       
     } catch (error) {
       console.error('Stage transition error:', error.response?.data);
