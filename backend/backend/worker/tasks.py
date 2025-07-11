@@ -24,8 +24,8 @@ from backend.shared.database import (
 # All stage processors from agents directory
 from backend.worker.agents.s1_repo_cloner import process_stage1
 from backend.worker.agents.s2_document_analyzer import process_stage2
-from backend.worker.agents.s3_learning_pathway_generator import process_stage3
-from backend.worker.agents.s4_course_generator import process_stage4
+from backend.worker.agents.s3_learning_pathway_generator import process_stage3, LearningPath, Stage2Result
+from backend.worker.agents.s4_course_generator import process_stage4, Stage3Result, LearningModule
 from backend.core.config import settings
 
 # Load environment variables
@@ -252,6 +252,120 @@ def save_stage3_data(course_id: str, stage3_result):
     except Exception as e:
         db.rollback()
         logger.error(f"Failed to save Stage 3 data: {e}")
+        raise
+    finally:
+        db.close()
+
+def load_stage3_data(course_id: str):
+    """Load Stage 3 data from database and reconstruct Stage3Result object"""
+    db = get_db_session()
+    try:
+        # Load pathways and modules
+        pathways = db.query(Pathway).filter(Pathway.course_id == course_id).all()
+        
+        if not pathways:
+            logger.warning(f"No pathways found for course {course_id}")
+            return None
+            
+        # Reconstruct learning paths
+        learning_paths = []
+        for pathway in pathways:
+            # Load modules for this pathway
+            modules = db.query(Module).filter(Module.pathway_id == pathway.id).order_by(Module.sequence_order).all()
+            
+            # Convert modules to LearningModule objects
+            learning_modules = []
+            for module in modules:
+                learning_objectives = json.loads(module.learning_objectives) if module.learning_objectives else []
+                
+                learning_module = LearningModule(
+                    module_id=module.id,
+                    title=module.title,
+                    description=module.description,
+                    documents=[],  # We'll need to reconstruct this from document analyses
+                    learning_objectives=learning_objectives
+                )
+                learning_modules.append(learning_module)
+            
+            # Convert to LearningPath object
+            learning_path = LearningPath(
+                path_id=pathway.id,
+                title=pathway.title,
+                description=pathway.description,
+                target_complexity=ComplexityLevel(pathway.complexity_level) if pathway.complexity_level else ComplexityLevel.INTERMEDIATE,
+                modules=learning_modules
+            )
+            learning_paths.append(learning_path)
+        
+        # Load Stage 2 data (document analyses)
+        stage2_result = load_stage2_data(course_id)
+        
+        if not stage2_result:
+            logger.warning(f"No Stage 2 data found for course {course_id}")
+            stage2_result = []
+        
+        # Create Stage2Result object
+        stage2_result_obj = Stage2Result(
+            document_analyses=stage2_result,
+            overview_context=""  # We can add this if stored separately
+        )
+        
+        # Determine target complexity from the first pathway
+        target_complexity = learning_paths[0].target_complexity if learning_paths else ComplexityLevel.INTERMEDIATE
+        
+        # Create Stage3Result object
+        stage3_result = Stage3Result(
+            learning_paths=learning_paths,
+            target_complexity=target_complexity,
+            stage2_result=stage2_result_obj
+        )
+        
+        logger.info(f"Loaded Stage 3 data: {len(learning_paths)} pathways with {sum(len(path.modules) for path in learning_paths)} total modules")
+        return stage3_result
+        
+    except Exception as e:
+        logger.error(f"Failed to load Stage 3 data: {e}")
+        return None
+    finally:
+        db.close()
+
+def save_stage4_data(course_id: str, stage4_result):
+    """Save Stage 4 results to database"""
+    db = get_db_session()
+    try:
+        # Save generated course record
+        generated_course = GeneratedCourse(
+            course_id=course_id,
+            pathway_id=stage4_result.stage3_result.learning_paths[0].path_id if stage4_result.stage3_result.learning_paths else None,
+            export_path="",  # Will be set when exported
+            status='completed' if stage4_result.successful_generations > 0 else 'failed'
+        )
+        db.merge(generated_course)
+        
+        # Save module content for each generated module
+        for module_content in stage4_result.generated_content:
+            db_module_content = ModuleContent(
+                module_id=module_content.module_id,
+                introduction=module_content.introduction,
+                main_content=module_content.main_content,
+                conclusion=module_content.conclusion,
+                assessment=module_content.assessment,
+                summary=module_content.summary
+            )
+            db.merge(db_module_content)
+        
+        # Update course status
+        course = db.query(Course).filter(Course.course_id == course_id).first()
+        if course:
+            course.status = 'stage4_complete' if stage4_result.successful_generations > 0 else 'stage4_failed'
+            course.updated_at = datetime.utcnow()
+        
+        db.commit()
+        logger.info(f"Saved Stage 4 data: {len(stage4_result.generated_content)} modules generated")
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to save Stage 4 data: {e}")
         raise
     finally:
         db.close()
@@ -496,23 +610,45 @@ def stage4_course_generation(self, user_id: str, course_id: str, user_input: Dic
         stage4_input = Stage4Input(**user_input)
         logger.info(f"Stage 4 input: {stage4_input}")
         
-        # For now, return success with minimal data since stage4 is not fully implemented in the agents
-        # TODO: Implement proper stage4 with process_stage4 when needed
+        # Load Stage 3 result from database
+        update_task_progress(course_id, 'stage4', self.request.id, 'STARTED', 10, "Loading Stage 3 data")
+        stage3_result = load_stage3_data(course_id)
         
-        update_task_progress(course_id, 'stage4', self.request.id, 'SUCCESS', 100, "Stage 4 placeholder completed")
+        if not stage3_result:
+            raise ValueError(f"Stage 3 result not found for course {course_id}")
+        
+        # Call the real Stage 4 agent
+        update_task_progress(course_id, 'stage4', self.request.id, 'STARTED', 20, "Starting course content generation")
+        
+        stage4_result = process_stage4(
+            stage3_result=stage3_result,
+            additional_instructions=getattr(stage4_input, 'additional_instructions', ''),
+            task_id=self.request.id,
+            redis_client=redis_client
+        )
+        
+        if not stage4_result or stage4_result.successful_generations == 0:
+            raise ValueError("No course content generated")
+        
+        # Save stage result to database
+        update_task_progress(course_id, 'stage4', self.request.id, 'STARTED', 90, "Saving generated content")
+        save_stage4_data(course_id, stage4_result)
+        
+        # Update task progress
+        update_task_progress(course_id, 'stage4', self.request.id, 'SUCCESS', 100, "Course generation complete")
         update_course_status(course_id, 'stage4_complete')
         
-        logger.info(f"Stage 4 completed for course {course_id} (placeholder)")
+        logger.info(f"Stage 4 completed for course {course_id}: {stage4_result.successful_generations} modules generated")
         
         return {
             'success': True,
             'stage': CourseGenerationStage.COURSE_GENERATION.value,
-            'result': {'placeholder': True},
+            'result': stage4_result.model_dump(),
             'course_summary': {
                 'title': 'Generated Course',
                 'description': 'Course content generated successfully',
-                'module_count': 0,
-                'export_path': ''
+                'module_count': stage4_result.successful_generations,
+                'export_path': ''  # Will be set when exported
             }
         }
         
