@@ -11,7 +11,7 @@ from datetime import datetime
 
 from backend.shared.models import (
     CourseGenerationStage, Stage3Input, Stage4Input,
-    ComplexityLevel, DocumentAnalysis
+    ComplexityLevel, DocumentAnalysis, Stage1Response
 )
 from backend.shared.utils import get_n_words
 # Database operations for the 4-service architecture
@@ -72,35 +72,43 @@ def save_stage1_data(course_id: str, stage1_result):
     """Save Stage 1 data to database"""
     db = get_db_session()
     try:
-        # Create course record if it doesn't exist
+        # Update existing course record
         course = db.query(Course).filter(Course.course_id == course_id).first()
-        if not course:
-            # This shouldn't happen, but create if missing
-            course = Course(
-                course_id=course_id,
-                user_id="unknown",  # Should be passed properly
-                repo_url=getattr(stage1_result, 'repo_url', ''),
-                repo_name=getattr(stage1_result, 'repo_name', ''),
-                status='stage1_complete'
-            )
-            db.add(course)
-        else:
-            course.repo_name = getattr(stage1_result, 'repo_name', '')
+        if course:
+            course.repo_name = stage1_result.get('repo_name', '')
             course.status = 'stage1_complete'
+            course.updated_at = datetime.utcnow()
+        else:
+            logger.error(f"Course {course_id} not found in database - cannot save Stage 1 data")
+            return
         
         # Save repository files
-        if hasattr(stage1_result, 'files') and stage1_result.files:
+        available_files = stage1_result.get('available_files', [])
+        available_folders = stage1_result.get('available_folders', [])
+        
+        if available_files or available_folders:
             # Clear existing files
             db.query(RepositoryFile).filter(RepositoryFile.course_id == course_id).delete()
             
-            # Add new files
-            for file_info in stage1_result.files:
+            # Add files
+            for file_path in available_files:
                 repo_file = RepositoryFile(
                     course_id=course_id,
-                    file_path=getattr(file_info, 'path', str(file_info)),
-                    file_type='file',  # Assume file for now
-                    is_documentation=getattr(file_info, 'is_documentation', False),
-                    is_overview_candidate=getattr(file_info, 'is_overview_candidate', False)
+                    file_path=file_path,
+                    file_type='file',
+                    is_documentation=file_path.endswith(('.md', '.mdx', '.txt', '.rst')),
+                    is_overview_candidate=any(keyword in file_path.lower() for keyword in ['readme', 'overview', 'intro', 'getting-started'])
+                )
+                db.add(repo_file)
+            
+            # Add folders
+            for folder_path in available_folders:
+                repo_file = RepositoryFile(
+                    course_id=course_id,
+                    file_path=folder_path,
+                    file_type='folder',
+                    is_documentation=False,
+                    is_overview_candidate=False
                 )
                 db.add(repo_file)
         
@@ -114,7 +122,7 @@ def save_stage1_data(course_id: str, stage1_result):
     finally:
         db.close()
 
-def load_stage1_data(course_id: str):
+def load_stage1_data(course_id: str) -> Optional[Stage1Response]:
     """Load Stage 1 data from database"""
     db = get_db_session()
     try:
@@ -122,16 +130,30 @@ def load_stage1_data(course_id: str):
         if not course:
             return None
         
-        # For now, return a simple object that the existing code can use
-        # You may need to adjust this based on what process_stage2 expects
-        class Stage1Result:
-            def __init__(self):
-                self.repo_url = course.repo_url
-                self.repo_name = course.repo_name
-                self.repo_path = ""  # May need to be set properly
-                self.files = []
+        # Load repository files
+        repo_files = db.query(RepositoryFile).filter(RepositoryFile.course_id == course_id).all()
         
-        result = Stage1Result()
+        # Separate files and folders
+        available_files = [f.file_path for f in repo_files if f.file_type == 'file']
+        available_folders = [f.file_path for f in repo_files if f.file_type == 'folder']
+        
+        # Find overview documents
+        overview_candidates = [f.file_path for f in repo_files if f.is_overview_candidate and f.file_type == 'file']
+        
+        # Create proper Stage1Response
+        result = Stage1Response(
+            repo_name=course.repo_name or '',
+            available_folders=available_folders,
+            available_files=available_files,
+            suggested_overview_docs=overview_candidates[:5],  # Top 5 candidates
+            all_overview_candidates=available_files,  # All available files
+            total_files=len(available_files)
+        )
+        
+        # Add additional attributes that agents might need  
+        result.repo_url = course.repo_url
+        result.repo_path = str(Path(settings.ROOT_DATA_DIR) / ".cache" / course.repo_name) if course.repo_name else ""
+        
         return result
         
     except Exception as e:
@@ -376,19 +398,19 @@ def stage1_clone_repository(self, user_id: str, course_id: str, repo_url: str) -
     try:
         logger.info(f"Starting Stage 1 for course {course_id}: cloning {repo_url}")
         
-        # Initialize database and create course record
+        # Initialize database and update course record
         init_database()
         db = get_db_session()
         try:
-            # Create course record
-            course = Course(
-                course_id=course_id,
-                user_id=user_id,
-                repo_url=repo_url,
-                status='stage1_running'
-            )
-            db.merge(course)  # Use merge to handle existing records
-            db.commit()
+            # Update existing course record (should already exist from project creation)
+            course = db.query(Course).filter(Course.course_id == course_id).first()
+            if course:
+                course.repo_url = repo_url
+                course.status = 'stage1_running'
+                course.updated_at = datetime.utcnow()
+                db.commit()
+            else:
+                logger.warning(f"Course {course_id} not found in database - task may have been triggered incorrectly")
         finally:
             db.close()
         
