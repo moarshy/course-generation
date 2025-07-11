@@ -30,7 +30,7 @@ class Course(Base):
     
     course_id = Column(String, primary_key=True)
     user_id = Column(String, nullable=False)
-    repo_url = Column(String, nullable=False)
+    repo_url = Column(String, nullable=True)  # Allow NULL for draft courses
     repo_name = Column(String)
     title = Column(String)
     description = Column(Text)

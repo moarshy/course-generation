@@ -152,7 +152,7 @@ class CourseInDB(BaseModel):
     description: Optional[str] = None
     status: CourseStatus = CourseStatus.DRAFT
     user_id: str
-    repo_url: str
+    repo_url: Optional[str] = None
     repo_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
