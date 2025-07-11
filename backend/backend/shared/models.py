@@ -50,8 +50,8 @@ class Stage1Input(BaseModel):
 
 class Stage2Input(BaseModel):
     """User input for Stage 2 - Document Analysis."""
-    include_folders: List[str] = Field(default_factory=list)
-    overview_doc: Optional[str] = None
+    complexity_level: str = Field(default="intermediate", description="Target complexity level")
+    additional_info: Optional[str] = Field(None, description="Additional instructions for analysis")
 
 class DocumentMetadataUpdate(BaseModel):
     """Update data for a document's metadata."""

@@ -170,30 +170,30 @@ def filter_files_by_folders(files: List[str], repo_path: str, include_folders: L
     
     return filtered_files
 
-def prepare_overview_context(stage1_result: dict, stage2_input: Stage2Input, 
-                           files_count: int) -> str:
+def prepare_overview_context(stage1_result: dict, include_folders: List[str], 
+                           overview_doc: Optional[str], files_count: int) -> str:
     """Prepare overview context from repository and user input"""
     context = f"Repository: {stage1_result.repo_name}\n"
     context += f"Total files: {files_count}\n"
     
-    if stage2_input.include_folders:
-        context += f"Focused on folders: {', '.join(stage2_input.include_folders)}\n"
+    if include_folders:
+        context += f"Focused on folders: {', '.join(include_folders)}\n"
     
     # Load overview document if provided
-    if stage2_input.overview_doc:
-        overview_path = Path(stage1_result.repo_path) / stage2_input.overview_doc
+    if overview_doc:
+        overview_path = Path(stage1_result.repo_path) / overview_doc
         if overview_path.exists():
             try:
                 with open(overview_path, 'r', encoding='utf-8') as f:
                     overview_content = f.read()
                 # Limit overview content to max words
                 overview_content = get_n_words(overview_content, S2Config.MAX_OVERVIEW_WORDS)
-                context += f"\nOverview Document ({stage2_input.overview_doc}):\n{overview_content}\n"
-                logger.info(f"Loaded overview document: {stage2_input.overview_doc}")
+                context += f"\nOverview Document ({overview_doc}):\n{overview_content}\n"
+                logger.info(f"Loaded overview document: {overview_doc}")
             except Exception as e:
-                logger.warning(f"Could not load overview document {stage2_input.overview_doc}: {e}")
+                logger.warning(f"Could not load overview document {overview_doc}: {e}")
         else:
-            logger.warning(f"Overview document not found: {stage2_input.overview_doc}")
+            logger.warning(f"Overview document not found: {overview_doc}")
     
     return context
 
@@ -499,11 +499,19 @@ def process_stage2(stage1_result: dict, user_input: Dict[str, Any] = None,
     Returns:
         dict with document analyses
     """
-    # Parse user input
+    # Parse user input - extract only Stage2Input relevant fields
     if user_input:
-        stage2_input = Stage2Input(**user_input)
+        stage2_input = Stage2Input(
+            complexity_level=user_input.get('complexity_level', 'intermediate'),
+            additional_info=user_input.get('additional_info', '')
+        )
+        # Extract folder/overview data separately
+        include_folders = user_input.get('include_folders', [])
+        overview_doc = user_input.get('overview_doc', None)
     else:
         stage2_input = Stage2Input()
+        include_folders = []
+        overview_doc = None
 
     try:
         # Convert relative paths to full paths for processing
@@ -517,10 +525,10 @@ def process_stage2(stage1_result: dict, user_input: Dict[str, Any] = None,
         files_to_analyze = filter_files_by_folders(
             full_file_paths,
             stage1_result.repo_path,
-            stage2_input.include_folders
+            include_folders
         )
         
-        if stage2_input.include_folders:
+        if include_folders:
             logger.info(f"Filtered to {len(files_to_analyze)} files based on selected folders")
         
         repo_path = Path(stage1_result.repo_path)
@@ -613,7 +621,7 @@ def process_stage2(stage1_result: dict, user_input: Dict[str, Any] = None,
         
         # Stage 2: LLM Analysis with parallel processing
         analyzer = DocumentAnalyzer()
-        overview_context = prepare_overview_context(stage1_result, stage2_input, len(raw_processed_files))
+        overview_context = prepare_overview_context(stage1_result, include_folders, overview_doc, len(raw_processed_files))
         
         # Thread-safe counters and lists for progress tracking
         processed_count = threading.Event()
@@ -705,8 +713,8 @@ def process_stage2(stage1_result: dict, user_input: Dict[str, Any] = None,
         result = {
             "processed_files_count": len(document_analyses),
             "failed_files_count": failed_files + llm_failed_files,
-            "include_folders": stage2_input.include_folders,
-            "overview_doc": stage2_input.overview_doc,
+            "include_folders": include_folders,
+            "overview_doc": overview_doc,
             "analysis_timestamp": datetime.utcnow().isoformat(),
             "document_analyses": [doc.dict() for doc in document_analyses],
             "total_concepts": stats['total_concepts'],

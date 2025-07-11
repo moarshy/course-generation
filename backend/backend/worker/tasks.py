@@ -27,6 +27,7 @@ from backend.worker.agents.s2_document_analyzer import process_stage2
 from backend.worker.agents.s3_learning_pathway_generator import process_stage3, LearningPath, Stage2Result
 from backend.worker.agents.s4_course_generator import process_stage4, Stage3Result, LearningModule
 from backend.core.config import settings
+from backend.services.repository_clone_service import RepositoryCloneService
 
 # Load environment variables
 load_dotenv()
@@ -470,6 +471,13 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
         if not stage1_result:
             raise ValueError(f"Stage 1 result not found for course {course_id}")
         
+        # Load Stage 1 selections from database
+        repo_service = RepositoryCloneService()
+        stage1_selections = repo_service.get_stage1_selections(course_id)
+        
+        if not stage1_selections:
+            raise ValueError(f"Stage 1 selections not found for course {course_id}. Please complete Stage 1 selections first.")
+        
         # Save user input to database
         db = get_db_session()
         try:
@@ -483,13 +491,21 @@ def stage2_document_analysis(self, user_id: str, course_id: str, user_input: Dic
         finally:
             db.close()
         
+        # Combine Stage 1 selections with Stage 2 input for process_stage2
+        combined_user_input = {
+            'include_folders': stage1_selections['selected_folders'],
+            'overview_doc': stage1_selections['overview_document'],
+            'complexity_level': user_input.get('complexity_level', 'intermediate'),
+            'additional_info': user_input.get('additional_info', '')
+        }
+        
         # Update task progress
         update_task_progress(course_id, 'stage2', self.request.id, 'STARTED', 20, "Processing documents")
         
         # Call the stage processor
         stage2_result = process_stage2(
             stage1_result=stage1_result,
-            user_input=user_input,
+            user_input=combined_user_input,
             task_id=self.request.id,
             redis_client=redis_client,
             course_id=course_id

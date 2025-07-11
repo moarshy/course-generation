@@ -14,6 +14,33 @@ class CourseService:
         self.root_data_dir = Path(getattr(settings, 'ROOT_DATA_DIR', './data'))
         self.root_data_dir.mkdir(exist_ok=True)
     
+    def _map_db_status_to_course_status(self, db_status: str) -> CourseStatus:
+        """Map detailed database status to CourseStatus enum"""
+        if not db_status:
+            return CourseStatus.DRAFT
+            
+        # Map detailed statuses to high-level CourseStatus
+        status_mapping = {
+            'draft': CourseStatus.DRAFT,
+            'stage1_running': CourseStatus.GENERATING,
+            'stage1_complete': CourseStatus.GENERATING,
+            'stage2_running': CourseStatus.GENERATING,
+            'stage2_complete': CourseStatus.GENERATING,
+            'stage3_running': CourseStatus.GENERATING,
+            'stage3_complete': CourseStatus.GENERATING,
+            'stage4_running': CourseStatus.GENERATING,
+            'stage4_complete': CourseStatus.COMPLETED,
+            'generating': CourseStatus.GENERATING,
+            'completed': CourseStatus.COMPLETED,
+            'failed': CourseStatus.FAILED,
+            'stage1_failed': CourseStatus.FAILED,
+            'stage2_failed': CourseStatus.FAILED,
+            'stage3_failed': CourseStatus.FAILED,
+            'stage4_failed': CourseStatus.FAILED,
+        }
+        
+        return status_mapping.get(db_status, CourseStatus.DRAFT)
+    
     def _get_course_dir(self, user_id: str, course_id: str) -> Path:
         """Get course directory for deletion purposes"""
         safe_user_id = user_id.replace('|', '_').replace('/', '_')
@@ -79,7 +106,7 @@ class CourseService:
                     course_id=db_course.course_id,
                     title=db_course.title,
                     description=db_course.description,
-                    status=CourseStatus(db_course.status),
+                    status=self._map_db_status_to_course_status(db_course.status),
                     user_id=db_course.user_id,
                     repo_url=db_course.repo_url,
                     repo_name=db_course.repo_name,
@@ -109,7 +136,7 @@ class CourseService:
                         course_id=db_course.course_id,
                         title=db_course.title,
                         description=db_course.description,
-                        status=CourseStatus(db_course.status),
+                        status=self._map_db_status_to_course_status(db_course.status),
                         user_id=db_course.user_id,
                         repo_url=db_course.repo_url,
                         repo_name=db_course.repo_name,
@@ -152,7 +179,7 @@ class CourseService:
                     course_id=db_course.course_id,
                     title=db_course.title,
                     description=db_course.description,
-                    status=CourseStatus(db_course.status),
+                    status=self._map_db_status_to_course_status(db_course.status),
                     user_id=db_course.user_id,
                     repo_url=db_course.repo_url,
                     repo_name=db_course.repo_name,
