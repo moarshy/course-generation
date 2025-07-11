@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List
-from backend.shared.models import Course, CourseCreate, CourseUpdate, CourseInDB
+from backend.shared.models import Course, CourseCreate, CourseUpdate
 from backend.services.course_service import CourseService
 from backend.core.security import get_current_user_id
 
@@ -10,14 +10,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["projects"])
 course_service = CourseService()
 
-@router.post("/", response_model=CourseInDB)
+@router.post("/", response_model=Course)
 async def create_course(
     course_data: CourseCreate,
     current_user_id: str = Depends(get_current_user_id)
 ):
     """Create a new course"""
     try:
-        course = course_service.create_course(current_user_id, course_data)
+        course = course_service.create_course(course_data, current_user_id)
         return course
         
     except Exception as e:
@@ -68,7 +68,7 @@ async def get_course(
                 detail="Course not found"
             )
         
-        course = course_service.get_course_by_id(course_id)
+        course = course_service.get_course_by_id(course_id, current_user_id)
         if not course:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -109,7 +109,7 @@ async def update_course(
                 detail="Course not found"
             )
         
-        course = course_service.update_course(course_id, course_data)
+        course = course_service.update_course(course_id, current_user_id, course_data)
         if not course:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

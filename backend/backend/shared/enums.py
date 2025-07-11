@@ -34,8 +34,31 @@ class GenerationStatus(str, Enum):
 
 
 class CourseStatus(str, Enum):
-    """Course status."""
+    """Course status with detailed stage tracking."""
+    # Initial states
     DRAFT = "draft"
+    
+    # Stage 1 - Repository cloning
+    STAGE1_RUNNING = "stage1_running"
+    STAGE1_COMPLETE = "stage1_complete"
+    STAGE1_FAILED = "stage1_failed"
+    
+    # Stage 2 - Document analysis
+    STAGE2_RUNNING = "stage2_running"
+    STAGE2_COMPLETE = "stage2_complete"
+    STAGE2_FAILED = "stage2_failed"
+    
+    # Stage 3 - Learning pathway building
+    STAGE3_RUNNING = "stage3_running"
+    STAGE3_COMPLETE = "stage3_complete"
+    STAGE3_FAILED = "stage3_failed"
+    
+    # Stage 4 - Course generation
+    STAGE4_RUNNING = "stage4_running"
+    STAGE4_COMPLETE = "stage4_complete"
+    STAGE4_FAILED = "stage4_failed"
+    
+    # Legacy statuses for backward compatibility
     GENERATING = "generating"
     ACTIVE = "active"
     COMPLETED = "completed"

@@ -123,7 +123,7 @@ def save_stage1_data(course_id: str, stage1_result):
     finally:
         db.close()
 
-def load_stage1_data(course_id: str) -> Optional[Stage1Response]:
+def load_stage1_data(course_id: str) -> Optional[dict]:
     """Load Stage 1 data from database"""
     db = get_db_session()
     try:
@@ -141,19 +141,17 @@ def load_stage1_data(course_id: str) -> Optional[Stage1Response]:
         # Find overview documents
         overview_candidates = [f.file_path for f in repo_files if f.is_overview_candidate and f.file_type == 'file']
         
-        # Create proper Stage1Response
-        result = Stage1Response(
-            repo_name=course.repo_name or '',
-            available_folders=available_folders,
-            available_files=available_files,
-            suggested_overview_docs=overview_candidates[:5],  # Top 5 candidates
-            all_overview_candidates=available_files,  # All available files
-            total_files=len(available_files)
-        )
-        
-        # Add additional attributes that agents might need  
-        result.repo_url = course.repo_url
-        result.repo_path = str(Path(settings.ROOT_DATA_DIR) / ".cache" / course.repo_name) if course.repo_name else ""
+        # Create dict result that matches what process_stage2 expects
+        result = {
+            "repo_name": course.repo_name or '',
+            "repo_url": course.repo_url,
+            "repo_path": str(Path(settings.ROOT_DATA_DIR) / ".cache" / course.repo_name) if course.repo_name else "",
+            "available_folders": available_folders,
+            "available_files": available_files,
+            "suggested_overview_docs": overview_candidates,
+            "all_overview_candidates": available_files,  # All available files
+            "total_files": len(available_files)
+        }
         
         return result
         
