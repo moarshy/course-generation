@@ -201,7 +201,7 @@ async def save_stage1_selections(
         # Save Stage 1 selections using lean service
         success = repo_service.save_stage1_selections(
             course_id, 
-            stage1_input.selected_folders,
+            stage1_input.include_folders,
             stage1_input.overview_doc
         )
         
