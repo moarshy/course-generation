@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     AUTH0_ALGORITHMS: List[str] = ["RS256"]
     AUTH0_ISSUER: str = ""
     
+    # Development mode configuration
+    DEV_MODE: bool = True
+    DEV_TOKEN: str = "dev-token-12345"
+    DEV_USER_ID: str = "dev-user|12345"
+    
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
