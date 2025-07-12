@@ -265,7 +265,8 @@ def start_stage4(course_id: str):
     log("=== Starting Stage 4 - Course Generation ===")
     
     stage4_input = {
-        "selected_complexity": "beginner"
+        "selected_complexity": "beginner",
+        "additional_instructions": "Focus on practical implementation with hands-on examples"
     }
     
     result = make_request("POST", f"/api/course-generation/{course_id}/stage4", stage4_input)
