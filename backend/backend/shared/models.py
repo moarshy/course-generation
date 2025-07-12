@@ -30,6 +30,11 @@ class DocumentAnalysis(BaseModel):
     semantic_summary: str
     prerequisites: List[str]
     related_topics: List[str]
+    headings: List[str] = Field(default_factory=list)
+    code_languages: List[str] = Field(default_factory=list)
+    frontmatter: Dict[str, Any] = Field(default_factory=dict)
+    word_count: int = 0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     confidence_score: float = 0.0
     analysis_timestamp: datetime = Field(default_factory=datetime.utcnow)
 
@@ -247,11 +252,13 @@ class Stage2Response(BaseModel):
     failed_files_count: int
     include_folders: List[str]
     overview_doc: Optional[str]
-    analysis_timestamp: str
+    analysis_timestamp: Optional[str] = None
     analyzed_documents: List[DocumentSummary]
     
     @validator('analysis_timestamp', pre=True)
     def convert_datetime_to_string(cls, v):
+        if v is None:
+            return datetime.utcnow().isoformat()
         if isinstance(v, datetime):
             return v.isoformat()
         return v

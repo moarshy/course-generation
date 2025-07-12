@@ -1,6 +1,7 @@
 import logging
 from fastapi import APIRouter, HTTPException, Depends, status, Query
 from typing import Optional
+from datetime import datetime
 import redis
 import json
 from backend.shared.models import (
@@ -105,7 +106,7 @@ async def get_generation_status(
         stage_info = stage_mapping.get(course_status, {'current_stage': 'unknown', 'progress': 0})
         
         # Determine overall status
-        if 'complete' in course_status:
+        if course_status == 'stage4_complete':
             overall_status = 'completed'
         elif 'running' in course_status:
             overall_status = 'running'
@@ -344,7 +345,7 @@ async def get_stage2_result(
             failed_files_count=0,  # We don't track this separately now
             include_folders=[],  # Could be retrieved from Stage1 selections if needed
             overview_doc=None,  # Could be retrieved from Stage1 selections if needed
-            analysis_timestamp=None,  # Could add this to database
+            analysis_timestamp=datetime.utcnow().isoformat(),  # Current timestamp
             analyzed_documents=result['analyzed_documents']
         )
         

@@ -112,7 +112,8 @@ class Stage3Input(Base):
     __tablename__ = "stage3_inputs"
     
     course_id = Column(String, ForeignKey('courses.course_id', ondelete='CASCADE'), primary_key=True)
-    additional_info = Column(Text)
+    complexity_level = Column(String, default="intermediate")
+    additional_instructions = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class Pathway(Base):
