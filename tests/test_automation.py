@@ -135,18 +135,35 @@ def wait_for_stage_completion(course_id: str, stage_name: str, max_wait_seconds:
     """Wait for a stage to complete"""
     log(f"=== Waiting for {stage_name} completion ===")
     
+    # Map stage names to status keys
+    stage_mapping = {
+        "Stage 1": "CLONE_REPO",
+        "Stage 2": "DOCUMENT_ANALYSIS", 
+        "Stage 3": "PATHWAY_BUILDING",
+        "Stage 4": "COURSE_GENERATION"
+    }
+    
+    stage_key = stage_mapping.get(stage_name)
+    if not stage_key:
+        log(f"Unknown stage name: {stage_name}", "ERROR")
+        return False
+    
     start_time = time.time()
     while time.time() - start_time < max_wait_seconds:
         # Check course status
         result = make_request("GET", f"/api/course-generation/{course_id}/status")
         if result["success"]:
-            status = result["data"].get("status", "unknown")
-            log(f"Current status: {status}")
+            data = result["data"]
+            stage_statuses = data.get("stage_statuses", {})
+            stage_status = stage_statuses.get(stage_key, "unknown")
+            database_status = data.get("database_status", "unknown")
             
-            if "complete" in status.lower():
+            log(f"Current {stage_name} status: {stage_status} (database: {database_status})")
+            
+            if stage_status == "completed":
                 log(f"{stage_name} completed successfully!")
                 return True
-            elif "failed" in status.lower():
+            elif stage_status == "failed" or "failed" in database_status.lower():
                 log(f"{stage_name} failed!", "ERROR")
                 return False
                 
