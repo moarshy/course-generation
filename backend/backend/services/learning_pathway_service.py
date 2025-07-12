@@ -31,7 +31,8 @@ class LearningPathwayService(BaseService):
             try:
                 stage3_input = Stage3Input(
                     course_id=course_id,
-                    additional_info=additional_info
+                    complexity_level=complexity_level,
+                    additional_instructions=additional_info
                 )
                 db.merge(stage3_input)
                 db.commit()
@@ -158,7 +159,8 @@ class LearningPathwayService(BaseService):
                 return None
             
             return {
-                "additional_info": input_data.additional_info,
+                "complexity_level": input_data.complexity_level,
+                "additional_instructions": input_data.additional_instructions,
                 "created_at": input_data.created_at.isoformat() if input_data.created_at else None
             }
             

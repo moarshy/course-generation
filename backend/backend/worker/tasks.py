@@ -10,7 +10,7 @@ import json
 from datetime import datetime
 
 from backend.shared.models import (
-    CourseGenerationStage, Stage3Input, Stage4Input,
+    CourseGenerationStage, Stage3Input as Stage3InputModel, Stage4Input,
     ComplexityLevel, DocumentAnalysis, Stage1Response
 )
 from backend.shared.utils import get_n_words
@@ -18,7 +18,7 @@ from backend.shared.utils import get_n_words
 from backend.shared.database import (
     init_database, get_db_session, update_task_progress, update_course_status,
     save_repository_files, Course, RepositoryFile, Stage1Selection, Stage2Input,
-    AnalyzedDocument, Stage3Input, Pathway, Module, Stage3Selection, 
+    AnalyzedDocument, Stage3Input as Stage3InputDB, Pathway, Module, Stage3Selection, 
     GeneratedCourse as DBGeneratedCourse, ModuleContent
 )
 # All stage processors from agents directory
@@ -234,11 +234,14 @@ def load_stage2_data(course_id: str):
             )
             document_analyses.append(doc_analysis)
         
-        return document_analyses
+        return Stage2Result(
+            document_analyses=document_analyses,
+            overview_context=""  # We can add this if stored separately
+        )
         
     except Exception as e:
         logger.error(f"Failed to load Stage 2 data: {e}")
-        return []
+        return None
     finally:
         db.close()
 
@@ -336,13 +339,10 @@ def load_stage3_data(course_id: str):
         
         if not stage2_result:
             logger.warning(f"No Stage 2 data found for course {course_id}")
-            stage2_result = []
+            stage2_result = Stage2Result(document_analyses=[], overview_context="")
         
         # Create Stage2Result object
-        stage2_result_obj = Stage2Result(
-            document_analyses=stage2_result,
-            overview_context=""  # We can add this if stored separately
-        )
+        stage2_result_obj = stage2_result
         
         # Determine target complexity from the first pathway
         target_complexity = learning_paths[0].target_complexity if learning_paths else ComplexityLevel.INTERMEDIATE
@@ -557,16 +557,17 @@ def stage3_pathway_building(self, user_id: str, course_id: str, user_input: Dict
         
         # Parse user input
         if user_input:
-            stage3_input = Stage3Input(**user_input)
+            stage3_input = Stage3InputModel(**user_input)
         else:
-            stage3_input = Stage3Input()
+            stage3_input = Stage3InputModel()
         
         # Save user input to database
         db = get_db_session()
         try:
-            stage3_db_input = Stage3Input(
+            stage3_db_input = Stage3InputDB(
                 course_id=course_id,
-                additional_info=stage3_input.additional_instructions or ''
+                complexity_level=stage3_input.complexity_level,
+                additional_instructions=stage3_input.additional_instructions or ''
             )
             db.merge(stage3_db_input)
             db.commit()
@@ -578,7 +579,7 @@ def stage3_pathway_building(self, user_id: str, course_id: str, user_input: Dict
         # Load Stage 2 result from database instead of pickle
         stage2_result = load_stage2_data(course_id)
         
-        if not stage2_result:
+        if not stage2_result or not stage2_result.document_analyses:
             raise ValueError(f"Stage 2 result not found for course {course_id}")
         
         # Update task progress
