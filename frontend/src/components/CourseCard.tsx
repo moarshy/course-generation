@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Calendar, ExternalLink, Play, Trash2, MoreVertical, Edit } from 'lucide-react';
 import { Course, CourseStatus, CourseCreate } from '@/lib/types';
@@ -24,13 +24,45 @@ export default function CourseCard({
 }: CourseCardProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const router = useRouter();
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    if (isMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isMenuOpen]);
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+        return 'Invalid date';
+      }
+      
+      const months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      ];
+      
+      const year = date.getFullYear();
+      const month = months[date.getMonth()];
+      const day = date.getDate();
+      
+      return `${month} ${day}, ${year}`;
+    } catch (error) {
+      return 'Invalid date';
+    }
   };
 
   const getStatusText = (status: CourseStatus) => {
@@ -92,13 +124,13 @@ export default function CourseCard({
 
   const handleCardClick = () => {
     if (canContinue(course.status) || isProcessing(course.status)) {
-      router.push(`/course/${course.course_id}`);
+      router.push(`/course-generation/${course.course_id}`);
     }
   };
 
   const handleStartGeneration = (e: React.MouseEvent) => {
     e.stopPropagation();
-    router.push(`/course/${course.course_id}/generate`);
+    router.push(`/course-generation/${course.course_id}`);
   };
 
   const handleOpenRepo = (e: React.MouseEvent) => {
@@ -138,7 +170,7 @@ export default function CourseCard({
               <p className="text-gray-600 text-sm line-clamp-2">{course.description}</p>
             )}
           </div>
-          <div className="relative">
+          <div className="relative" ref={menuRef}>
             <button
               onClick={(e) => {
                 e.stopPropagation();

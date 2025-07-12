@@ -88,7 +88,16 @@ export default function EditCourseModal({ isOpen, onClose, onSubmit, course }: E
                 </div>
                 <div>
                   <h3 className="text-2xl font-bold text-emerald-900">Edit Course</h3>
-                  <p className="text-sm text-emerald-700 mt-1">Last updated: {new Date(course.updated_at).toLocaleDateString()}</p>
+                                      <p className="text-sm text-emerald-700 mt-1">Last updated: {(() => {
+                      try {
+                        const date = new Date(course.updated_at);
+                        if (isNaN(date.getTime())) return 'Unknown';
+                        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                        return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+                      } catch {
+                        return 'Unknown';
+                      }
+                    })()}</p>
                 </div>
               </div>
               <button

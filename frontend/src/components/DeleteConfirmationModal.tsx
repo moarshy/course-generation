@@ -120,7 +120,16 @@ export default function DeleteConfirmationModal({
                   <div className="flex items-start space-x-3">
                     <span className="text-sm font-semibold text-gray-600 min-w-[80px]">Created:</span>
                     <span className="text-base font-medium text-gray-900 flex-1">
-                      {new Date(course.created_at).toLocaleDateString()}
+                      {(() => {
+                        try {
+                          const date = new Date(course.created_at);
+                          if (isNaN(date.getTime())) return 'Unknown';
+                          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                          return `${months[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+                        } catch {
+                          return 'Unknown';
+                        }
+                      })()}
                     </span>
                   </div>
                 </div>
