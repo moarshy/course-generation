@@ -64,10 +64,16 @@ class DocumentAnalyserService(BaseService):
             analyzed_documents = []
             for doc in docs:
                 import json
+                from pathlib import Path
                 
-                analyzed_documents.append({
-                    "id": doc.id,
-                    "file_path": doc.file_path,
+                # Extract filename from file_path
+                filename = Path(doc.file_path).name if doc.file_path else "unknown.md"
+                
+                # Create a content preview (first 200 characters of summary)
+                content_preview = (doc.summary[:200] + "...") if doc.summary and len(doc.summary) > 200 else (doc.summary or "No summary available")
+                
+                # Build metadata object with all the analysis data
+                metadata = {
                     "title": doc.title,
                     "doc_type": doc.doc_type,
                     "complexity_level": doc.complexity_level,
@@ -76,8 +82,21 @@ class DocumentAnalyserService(BaseService):
                     "summary": doc.summary,
                     "prerequisites": json.loads(doc.prerequisites) if doc.prerequisites else [],
                     "related_topics": json.loads(doc.related_topics) if doc.related_topics else [],
+                    "headings": json.loads(doc.headings) if doc.headings else [],
+                    "code_languages": json.loads(doc.code_languages) if doc.code_languages else [],
+                    "frontmatter": json.loads(doc.frontmatter) if doc.frontmatter else {},
+                    "doc_metadata": json.loads(doc.doc_metadata) if doc.doc_metadata else {},
                     "word_count": doc.word_count,
                     "analyzed_at": doc.analyzed_at.isoformat() if doc.analyzed_at else None
+                }
+                
+                # Format according to DocumentSummary model
+                analyzed_documents.append({
+                    "id": doc.id,
+                    "filename": filename,
+                    "path": doc.file_path,
+                    "content": content_preview,
+                    "metadata": metadata
                 })
             
             return {

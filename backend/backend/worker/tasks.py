@@ -169,18 +169,25 @@ def save_stage2_data(course_id: str, stage2_result):
         # Clear existing analyzed documents
         db.query(AnalyzedDocument).filter(AnalyzedDocument.course_id == course_id).delete()
         
-        # Save analyzed documents
-        if hasattr(stage2_result, 'document_analyses'):
-            for doc_analysis in stage2_result.document_analyses:
+        # Save analyzed documents - stage2_result is a dictionary, not an object
+        if 'document_analyses' in stage2_result:
+            for doc_analysis in stage2_result['document_analyses']:
                 analyzed_doc = AnalyzedDocument(
                     course_id=course_id,
-                    file_path=doc_analysis.file_path,
-                    title=doc_analysis.title,
-                    doc_type=doc_analysis.doc_type,
-                    key_concepts=json.dumps(doc_analysis.key_concepts) if hasattr(doc_analysis, 'key_concepts') else None,
-                    learning_objectives=json.dumps(doc_analysis.learning_objectives) if hasattr(doc_analysis, 'learning_objectives') else None,
-                    summary=doc_analysis.semantic_summary if hasattr(doc_analysis, 'semantic_summary') else None,
-                    word_count=getattr(doc_analysis, 'word_count', 0)
+                    file_path=doc_analysis.get('file_path', ''),
+                    title=doc_analysis.get('title', ''),
+                    doc_type=doc_analysis.get('doc_type', ''),
+                    complexity_level=doc_analysis.get('complexity_level', ''),
+                    key_concepts=json.dumps(doc_analysis.get('key_concepts', [])),
+                    learning_objectives=json.dumps(doc_analysis.get('learning_objectives', [])),
+                    summary=doc_analysis.get('semantic_summary', ''),
+                    prerequisites=json.dumps(doc_analysis.get('prerequisites', [])),
+                    related_topics=json.dumps(doc_analysis.get('related_topics', [])),
+                    headings=json.dumps(doc_analysis.get('headings', [])),
+                    code_languages=json.dumps(doc_analysis.get('code_languages', [])),
+                    frontmatter=json.dumps(doc_analysis.get('frontmatter', {})),
+                    doc_metadata=json.dumps(doc_analysis.get('metadata', {})),
+                    word_count=doc_analysis.get('word_count', 0)
                 )
                 db.add(analyzed_doc)
         
@@ -217,8 +224,13 @@ def load_stage2_data(course_id: str):
                 key_concepts=json.loads(doc.key_concepts) if doc.key_concepts else [],
                 learning_objectives=json.loads(doc.learning_objectives) if doc.learning_objectives else [],
                 semantic_summary=doc.summary or '',
-                prerequisites=[],
-                related_topics=[]
+                prerequisites=json.loads(doc.prerequisites) if doc.prerequisites else [],
+                related_topics=json.loads(doc.related_topics) if doc.related_topics else [],
+                headings=json.loads(doc.headings) if doc.headings else [],
+                code_languages=json.loads(doc.code_languages) if doc.code_languages else [],
+                frontmatter=json.loads(doc.frontmatter) if doc.frontmatter else {},
+                word_count=doc.word_count or 0,
+                metadata=json.loads(doc.doc_metadata) if doc.doc_metadata else {}
             )
             document_analyses.append(doc_analysis)
         

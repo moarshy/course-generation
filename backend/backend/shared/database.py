@@ -105,6 +105,10 @@ class AnalyzedDocument(Base):
     summary = Column(Text)
     prerequisites = Column(Text)  # JSON array of prerequisites
     related_topics = Column(Text)  # JSON array of related topics
+    headings = Column(Text)  # JSON array of headings
+    code_languages = Column(Text)  # JSON array of programming languages
+    frontmatter = Column(Text)  # JSON object of frontmatter data
+    doc_metadata = Column(Text)  # JSON object of metadata
     word_count = Column(Integer)
     analyzed_at = Column(DateTime, default=datetime.utcnow)
 
@@ -112,8 +116,7 @@ class Stage3Input(Base):
     __tablename__ = "stage3_inputs"
     
     course_id = Column(String, ForeignKey('courses.course_id', ondelete='CASCADE'), primary_key=True)
-    complexity_level = Column(String, default="intermediate")
-    additional_instructions = Column(Text)
+    additional_info = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class Pathway(Base):
