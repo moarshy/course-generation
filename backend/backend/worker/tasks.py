@@ -24,8 +24,8 @@ from backend.shared.database import (
 # All stage processors from agents directory
 from backend.worker.agents.s1_repo_cloner import process_stage1
 from backend.worker.agents.s2_document_analyzer import process_stage2
-from backend.worker.agents.s3_learning_pathway_generator import process_stage3, LearningPath, Stage2Result
-from backend.worker.agents.s4_course_generator import process_stage4, Stage3Result, LearningModule
+from backend.worker.agents.s3_learning_pathway_generator import process_stage3, LearningPath, Stage2Result, LearningModule
+from backend.worker.agents.s4_course_generator import process_stage4, Stage3Result
 from backend.core.config import settings
 from backend.services.repository_clone_service import RepositoryCloneService
 
@@ -273,7 +273,8 @@ def save_stage3_data(course_id: str, stage3_result):
                             title=module.title,
                             description=module.description,
                             sequence_order=i,
-                            learning_objectives=json.dumps(getattr(module, 'learning_objectives', []))
+                            learning_objectives=json.dumps(getattr(module, 'learning_objectives', [])),
+                            documents=json.dumps(getattr(module, 'documents', []))
                         )
                         db.add(db_module)
         
@@ -314,12 +315,13 @@ def load_stage3_data(course_id: str):
             learning_modules = []
             for module in modules:
                 learning_objectives = json.loads(module.learning_objectives) if module.learning_objectives else []
+                documents = json.loads(module.documents) if module.documents else []
                 
                 learning_module = LearningModule(
                     module_id=module.id,
                     title=module.title,
                     description=module.description,
-                    documents=[],  # We'll need to reconstruct this from document analyses
+                    documents=documents,  # Now properly restored from database
                     learning_objectives=learning_objectives
                 )
                 learning_modules.append(learning_module)
@@ -368,7 +370,7 @@ def save_stage4_data(course_id: str, stage4_result):
     db = get_db_session()
     try:
         # Save generated course record
-        generated_course = GeneratedCourse(
+        generated_course = DBGeneratedCourse(
             course_id=course_id,
             pathway_id=stage4_result.stage3_result.learning_paths[0].path_id if stage4_result.stage3_result.learning_paths else None,
             export_path="",  # Will be set when exported

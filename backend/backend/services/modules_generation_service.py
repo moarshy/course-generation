@@ -11,8 +11,9 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from backend.shared.database import (
-    get_db_session, Course, GeneratedCourse, ModuleContent
+    get_db_session, Course, GeneratedCourse, ModuleContent, Module, Pathway
 )
+from backend.shared.models import Stage4Input
 from backend.services.base_service import BaseService
 
 logger = logging.getLogger(__name__)
@@ -22,16 +23,16 @@ class ModulesGenerationService(BaseService):
     """Lean service for course content generation"""
     
     def start_course_generation(self, course_id: str, user_id: str, 
-                              selected_pathway_id: str = None) -> str:
+                              stage4_input: Stage4Input) -> str:
         """Start course generation (Stage 4) - Triggers Celery task"""
         try:
+            # Convert Stage4Input to dictionary for Celery task
+            user_input = stage4_input.model_dump() if hasattr(stage4_input, 'model_dump') else stage4_input
+            
             # Trigger Celery task using base class method
             task_id = self.trigger_celery_task(
                 'backend.worker.tasks.stage4_course_generation',
-                [user_id, course_id, {
-                    "selected_pathway_id": selected_pathway_id,
-                    "custom_pathway": None  # For now, use selected pathway
-                }]
+                [user_id, course_id, user_input]
             )
             
             logger.info(f"Started course generation for course {course_id}, task {task_id}")
@@ -56,10 +57,9 @@ class ModulesGenerationService(BaseService):
             # Get course basic info
             course = db.query(Course).filter(Course.course_id == course_id).first()
             
-            # Get module content if available
-            module_contents = db.query(ModuleContent).join(
-                # This would need proper join logic based on pathway/module relationships
-                # For now, return basic info
+            # Get module content for this course by joining through Module and Pathway
+            module_contents = db.query(ModuleContent).join(Module).join(Pathway).filter(
+                Pathway.course_id == course_id
             ).all() if generated_course.pathway_id else []
             
             module_list = []

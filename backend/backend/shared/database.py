@@ -144,6 +144,7 @@ class Module(Base):
     description = Column(Text)
     sequence_order = Column(Integer, nullable=False)
     learning_objectives = Column(Text)  # JSON array of objectives
+    documents = Column(Text)  # JSON array of document file paths assigned to this module
     estimated_time = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     

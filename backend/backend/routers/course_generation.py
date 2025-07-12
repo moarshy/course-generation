@@ -685,7 +685,7 @@ async def start_stage4(
         task_id = modules_service.start_course_generation(
             course_id, 
             current_user_id, 
-            getattr(stage4_input, 'selected_pathway_id', None)
+            stage4_input
         )
         
         return {

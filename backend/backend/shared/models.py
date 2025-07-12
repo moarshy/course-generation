@@ -124,6 +124,7 @@ class Stage3Input(BaseModel):
 class Stage4Input(BaseModel):
     """User input for Stage 4 - Course Generation."""
     selected_complexity: ComplexityLevel
+    additional_instructions: Optional[str] = Field(default="", description="Additional instructions for content generation")
 
 
 # =============================================================================
