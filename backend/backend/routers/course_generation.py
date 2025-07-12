@@ -49,7 +49,7 @@ async def start_course_generation(
         )
         
         # Update course status
-        course_service.update_course(course_id, CourseUpdate(status=CourseStatus.GENERATING))
+        course_service.update_course(course_id, current_user_id, CourseUpdate(status=CourseStatus.STAGE1_RUNNING))
         
         return {
             "message": "Course generation started",
@@ -731,7 +731,7 @@ async def get_stage4_result(
         
         # Update course status to completed if generation is successful
         if result.get('generation_complete'):
-            course_service.update_course(course_id, CourseUpdate(status=CourseStatus.COMPLETED))
+            course_service.update_course(course_id, current_user_id, CourseUpdate(status=CourseStatus.STAGE4_COMPLETE))
         
         return Stage4Response(course_summary=course_summary)
         
@@ -764,7 +764,7 @@ async def cancel_generation(
         if success:
             # Update course status
             from backend.shared.models import CourseUpdate, CourseStatus
-            course_service.update_course(course_id, CourseUpdate(status=CourseStatus.FAILED))
+            course_service.update_course(course_id, current_user_id, CourseUpdate(status=CourseStatus.FAILED))
             
             return {"message": "Course generation cancelled successfully"}
         else:
