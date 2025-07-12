@@ -366,6 +366,9 @@ async def update_document_metadata(
 ):
     """Update document metadata"""
     try:
+        logger.info(f"🔄 Updating document metadata for course {course_id}")
+        logger.info(f"📝 Update request: {update_request}")
+        
         # Verify course ownership
         if not course_service.verify_course_ownership(course_id, current_user_id):
             raise HTTPException(
@@ -373,9 +376,22 @@ async def update_document_metadata(
                 detail="Course not found"
             )
         
-        # For now, just return success as document metadata updates 
-        # would need to be implemented in the DocumentAnalyserService
-        return {"message": "Document metadata update not yet implemented in lean service"}
+        # Update document metadata using the DocumentAnalyserService
+        result = doc_service.update_document_metadata(
+            course_id=course_id,
+            document_id=update_request.document_id,
+            metadata_updates=update_request.metadata_updates.dict()
+        )
+        
+        if 'error' in result:
+            logger.error(f"❌ Failed to update document metadata: {result['error']}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result['error']
+            )
+        
+        logger.info(f"✅ Successfully updated document metadata for document {update_request.document_id}")
+        return result
         
     except HTTPException:
         raise
