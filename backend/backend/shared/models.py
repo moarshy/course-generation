@@ -140,6 +140,7 @@ class CourseUpdate(BaseModel):
     """Data for updating an existing course."""
     title: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
+    repo_url: Optional[str] = None
     status: Optional[CourseStatus] = None
 
 class Course(BaseModel):
@@ -147,6 +148,7 @@ class Course(BaseModel):
     course_id: str
     title: str
     description: Optional[str] = None
+    repo_url: Optional[str] = None
     status: CourseStatus = CourseStatus.DRAFT
     created_at: datetime
     updated_at: datetime

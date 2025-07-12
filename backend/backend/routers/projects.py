@@ -40,6 +40,7 @@ async def get_user_courses(
                 course_id=course.course_id,
                 title=course.title,
                 description=course.description,
+                repo_url=course.repo_url,
                 status=course.status,
                 created_at=course.created_at,
                 updated_at=course.updated_at
@@ -80,6 +81,7 @@ async def get_course(
             course_id=course.course_id,
             title=course.title,
             description=course.description,
+            repo_url=course.repo_url,
             status=course.status,
             created_at=course.created_at,
             updated_at=course.updated_at
@@ -121,6 +123,7 @@ async def update_course(
             course_id=course.course_id,
             title=course.title,
             description=course.description,
+            repo_url=course.repo_url,
             status=course.status,
             created_at=course.created_at,
             updated_at=course.updated_at

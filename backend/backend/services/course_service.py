@@ -38,6 +38,7 @@ class CourseService:
                 course_id=course_id,
                 title=course_data.title,
                 description=course_data.description,
+                repo_url=None,  # Will be set later when generation starts
                 status=CourseStatus.DRAFT,
                 created_at=db_course.created_at,
                 updated_at=db_course.updated_at
@@ -66,6 +67,7 @@ class CourseService:
                 course_id=db_course.course_id,
                 title=db_course.title,
                 description=db_course.description,
+                repo_url=db_course.repo_url,
                 status=CourseStatus(db_course.status),
                 created_at=db_course.created_at,
                 updated_at=db_course.updated_at
@@ -90,6 +92,7 @@ class CourseService:
                     course_id=db_course.course_id,
                     title=db_course.title,
                     description=db_course.description,
+                    repo_url=db_course.repo_url,
                     status=CourseStatus(db_course.status),
                     created_at=db_course.created_at,
                     updated_at=db_course.updated_at
@@ -119,6 +122,8 @@ class CourseService:
                 db_course.title = updates.title
             if updates.description is not None:
                 db_course.description = updates.description
+            if updates.repo_url is not None:
+                db_course.repo_url = updates.repo_url
             if updates.status is not None:
                 db_course.status = updates.status.value
             
@@ -129,6 +134,7 @@ class CourseService:
                 course_id=db_course.course_id,
                 title=db_course.title,
                 description=db_course.description,
+                repo_url=db_course.repo_url,
                 status=CourseStatus(db_course.status),
                 created_at=db_course.created_at,
                 updated_at=db_course.updated_at
