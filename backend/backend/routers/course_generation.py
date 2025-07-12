@@ -73,57 +73,62 @@ async def get_generation_status(
 ):
     """Get the current status of course generation"""
     try:
-        # Verify course ownership
-        if not course_service.verify_course_ownership(course_id, current_user_id):
+        # Verify course ownership and get course record
+        course = course_service.get_course_by_id(course_id, current_user_id)
+        if not course:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Course not found"
             )
         
-        # Get status from all 4 services and combine
-        stage1_status = repo_service.get_task_status(course_id)
-        stage2_status = doc_service.get_task_status(course_id)
-        stage3_status = pathway_service.get_task_status(course_id)
-        stage4_status = modules_service.get_task_status(course_id)
+        # Get the actual course status from database
+        course_status = course.status
         
-        # Determine overall status and progress
-        stages = {
-            'stage1': stage1_status,
-            'stage2': stage2_status, 
-            'stage3': stage3_status,
-            'stage4': stage4_status
+        # Map database status to stage information
+        stage_mapping = {
+            'draft': {'current_stage': 'stage1', 'progress': 0},
+            'stage1_running': {'current_stage': 'stage1', 'progress': 10},
+            'stage1_complete': {'current_stage': 'stage1', 'progress': 25},
+            'stage2_running': {'current_stage': 'stage2', 'progress': 35},
+            'stage2_complete': {'current_stage': 'stage2', 'progress': 50},
+            'stage3_running': {'current_stage': 'stage3', 'progress': 60},
+            'stage3_complete': {'current_stage': 'stage3', 'progress': 75},
+            'stage4_running': {'current_stage': 'stage4', 'progress': 85},
+            'stage4_complete': {'current_stage': 'stage4', 'progress': 100},
+            'stage1_failed': {'current_stage': 'stage1', 'progress': 0},
+            'stage2_failed': {'current_stage': 'stage2', 'progress': 25},
+            'stage3_failed': {'current_stage': 'stage3', 'progress': 50},
+            'stage4_failed': {'current_stage': 'stage4', 'progress': 75},
+            'failed': {'current_stage': 'unknown', 'progress': 0}
         }
         
-        # Calculate overall progress
-        total_progress = 0
-        completed_stages = []
-        current_stage = 'stage1'
-        overall_status = 'pending'
+        stage_info = stage_mapping.get(course_status, {'current_stage': 'unknown', 'progress': 0})
         
-        for stage, status_info in stages.items():
-            if status_info['status'] == 'SUCCESS':
-                total_progress += 25
-                completed_stages.append(stage)
-            elif status_info['status'] == 'STARTED':
-                total_progress += int(status_info['progress'] * 0.25)
-                current_stage = stage
-                overall_status = 'running'
-            elif status_info['status'] == 'FAILURE':
-                overall_status = 'failed'
-                break
+        # Determine overall status
+        if 'complete' in course_status:
+            overall_status = 'completed'
+        elif 'running' in course_status:
+            overall_status = 'running'
+        elif 'failed' in course_status:
+            overall_status = 'failed'
+        else:
+            overall_status = 'pending'
+        
+        # Build stage statuses
+        stage_statuses = {
+            'CLONE_REPO': 'completed' if course_status in ['stage1_complete', 'stage2_running', 'stage2_complete', 'stage3_running', 'stage3_complete', 'stage4_running', 'stage4_complete'] else 'running' if course_status == 'stage1_running' else 'pending',
+            'DOCUMENT_ANALYSIS': 'completed' if course_status in ['stage2_complete', 'stage3_running', 'stage3_complete', 'stage4_running', 'stage4_complete'] else 'running' if course_status == 'stage2_running' else 'pending',
+            'PATHWAY_BUILDING': 'completed' if course_status in ['stage3_complete', 'stage4_running', 'stage4_complete'] else 'running' if course_status == 'stage3_running' else 'pending',
+            'COURSE_GENERATION': 'completed' if course_status == 'stage4_complete' else 'running' if course_status == 'stage4_running' else 'pending'
+        }
         
         return {
             'course_id': course_id,
-            'current_stage': current_stage,
+            'current_stage': stage_info['current_stage'],
             'status': overall_status,
-            'progress_percentage': min(total_progress, 100),
-            'stage_statuses': {
-                'CLONE_REPO': 'completed' if stage1_status['status'] == 'SUCCESS' else 'running' if stage1_status['status'] == 'STARTED' else 'pending',
-                'DOCUMENT_ANALYSIS': 'completed' if stage2_status['status'] == 'SUCCESS' else 'running' if stage2_status['status'] == 'STARTED' else 'pending',
-                'PATHWAY_BUILDING': 'completed' if stage3_status['status'] == 'SUCCESS' else 'running' if stage3_status['status'] == 'STARTED' else 'pending',
-                'COURSE_GENERATION': 'completed' if stage4_status['status'] == 'SUCCESS' else 'running' if stage4_status['status'] == 'STARTED' else 'pending'
-            },
-            'completed_stages': completed_stages
+            'progress_percentage': stage_info['progress'],
+            'stage_statuses': stage_statuses,
+            'database_status': course_status  # Include the raw database status for debugging
         }
         
     except HTTPException:

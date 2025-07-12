@@ -32,6 +32,7 @@ class Course(Base):
     user_id = Column(String, nullable=False)
     repo_url = Column(String, nullable=True)  # Allow NULL for draft courses
     repo_name = Column(String)
+    repo_path = Column(String, nullable=True)
     title = Column(String)
     description = Column(Text)
     status = Column(String, default='draft')  # 'draft', 'stage1_running', 'stage1_complete', etc.

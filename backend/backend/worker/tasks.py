@@ -77,6 +77,7 @@ def save_stage1_data(course_id: str, stage1_result):
         course = db.query(Course).filter(Course.course_id == course_id).first()
         if course:
             course.repo_name = stage1_result.get('repo_name', '')
+            course.repo_path = stage1_result.get('repo_path', '') 
             course.status = 'stage1_complete'
             course.updated_at = datetime.utcnow()
         else:
@@ -145,7 +146,7 @@ def load_stage1_data(course_id: str) -> Optional[dict]:
         result = {
             "repo_name": course.repo_name or '',
             "repo_url": course.repo_url,
-            "repo_path": str(Path(settings.ROOT_DATA_DIR) / ".cache" / course.repo_name) if course.repo_name else "",
+            "repo_path": course.repo_path or '',
             "available_folders": available_folders,
             "available_files": available_files,
             "suggested_overview_docs": overview_candidates,

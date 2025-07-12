@@ -173,7 +173,7 @@ def filter_files_by_folders(files: List[str], repo_path: str, include_folders: L
 def prepare_overview_context(stage1_result: dict, include_folders: List[str], 
                            overview_doc: Optional[str], files_count: int) -> str:
     """Prepare overview context from repository and user input"""
-    context = f"Repository: {stage1_result.repo_name}\n"
+    context = f"Repository: {stage1_result['repo_name']}\n"
     context += f"Total files: {files_count}\n"
     
     if include_folders:
@@ -181,7 +181,7 @@ def prepare_overview_context(stage1_result: dict, include_folders: List[str],
     
     # Load overview document if provided
     if overview_doc:
-        overview_path = Path(stage1_result.repo_path) / overview_doc
+        overview_path = Path(stage1_result["repo_path"]) / overview_doc
         if overview_path.exists():
             try:
                 with open(overview_path, 'r', encoding='utf-8') as f:
@@ -517,21 +517,21 @@ def process_stage2(stage1_result: dict, user_input: Dict[str, Any] = None,
         # Convert relative paths to full paths for processing
         
         full_file_paths = [
-            str(Path(stage1_result.repo_path) / file_path) 
-            for file_path in stage1_result.available_files
+            str(Path(stage1_result["repo_path"]) / file_path) 
+            for file_path in stage1_result["available_files"]
         ]
         
         # Filter files based on user-selected folders
         files_to_analyze = filter_files_by_folders(
             full_file_paths,
-            stage1_result.repo_path,
+            stage1_result["repo_path"],
             include_folders
         )
         
         if include_folders:
             logger.info(f"Filtered to {len(files_to_analyze)} files based on selected folders")
         
-        repo_path = Path(stage1_result.repo_path)
+        repo_path = Path(stage1_result["repo_path"])
         
         # Initialize detailed progress tracking in Redis
         if course_id and redis_client:
