@@ -568,40 +568,42 @@ export default function Stage3Component({
           {/* Learning Pathways */}
           <div>
             <h3 className="text-xl font-bold text-gray-900 mb-6">Generated Learning Pathways</h3>
-            <div className="space-y-8">
+            <div className="space-y-6">
               <DragDropContext onDragEnd={handleDragEnd}>
                 {stage3Data.pathways?.map((pathway, pathwayIndex) => (
                   <div key={pathway.id || pathwayIndex} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
                     {/* Pathway Header */}
-                    <div className="bg-gradient-to-r from-purple-500 to-indigo-600 text-white p-6">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center space-x-2 mb-2">
-                            <span className="px-3 py-1 bg-white bg-opacity-20 rounded-full text-xs font-medium">
+                    <div className="bg-gradient-to-r from-purple-600 to-indigo-700 text-white p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className="flex items-center space-x-2">
+                            <span className="px-3 py-1 bg-white bg-opacity-90 text-purple-700 rounded-full text-sm font-bold">
                               Pathway {pathway.index + 1}
                             </span>
-                            <span className={`px-3 py-1 rounded-full text-xs font-medium border ${
-                              pathway.complexity === 'beginner' ? 'bg-green-100 text-green-800 border-green-200' :
-                              pathway.complexity === 'intermediate' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
-                              'bg-red-100 text-red-800 border-red-200'
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              pathway.complexity === 'beginner' ? 'bg-green-100 text-green-800' :
+                              pathway.complexity === 'intermediate' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
                             }`}>
                               {pathway.complexity}
                             </span>
                           </div>
-                          <h4 className="text-xl font-bold mb-2">{pathway.title}</h4>
-                          <p className="text-purple-100 leading-relaxed">{pathway.description}</p>
                         </div>
-                        <div className="ml-6 text-right">
-                          <div className="text-3xl font-bold">{pathway.modules?.length || 0}</div>
-                          <div className="text-sm text-purple-200">Learning Modules</div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold">{pathway.modules?.length || 0}</div>
+                          <div className="text-xs text-purple-200">modules</div>
                         </div>
+                      </div>
+                      <div className="mt-3">
+                        <h4 className="text-lg font-bold mb-1">{pathway.title}</h4>
+                        <p className="text-purple-100 text-sm leading-relaxed">{pathway.description}</p>
                       </div>
                     </div>
 
                     {/* Modules - Single Column Layout */}
-                    <div className="p-6">
-                      <div className="flex items-center justify-between mb-6">
-                        <h5 className="text-lg font-semibold text-gray-900">Learning Modules</h5>
+                    <div className="p-4">
+                      <div className="flex items-center justify-between mb-4">
+                        <h5 className="text-base font-semibold text-gray-900">Learning Modules</h5>
                         <div className="flex items-center space-x-2 text-xs text-green-600">
                           <GripVertical className="w-3 h-3" />
                           <span>Drag to reorder</span>
@@ -614,7 +616,7 @@ export default function Stage3Component({
                           <div
                             ref={provided.innerRef}
                             {...provided.droppableProps}
-                            className={`space-y-4 ${snapshot.isDraggingOver ? 'border-purple-300' : ''}`}
+                            className={`space-y-3 ${snapshot.isDraggingOver ? 'border-purple-300' : ''}`}
                           >
                             {pathway.modules?.map((module, moduleIndex) => (
                               <Draggable
@@ -630,72 +632,63 @@ export default function Stage3Component({
                                     className={`group border border-gray-200 rounded-xl overflow-hidden hover:border-purple-300 hover:shadow-md transition-all duration-200 ${snapshot.isDragging ? 'shadow-lg' : ''}`}
                                   >
                                     {/* Module Header */}
-                                    <div className="bg-gradient-to-r from-gray-50 to-purple-50 border-b border-gray-200 p-4">
+                                    <div className="bg-gradient-to-r from-gray-50 to-purple-50 border-b border-gray-200 p-3">
                                       <div className="flex items-center justify-between">
-                                        <div className="flex items-center space-x-4">
+                                        <div className="flex items-center space-x-3">
                                           {/* Drag Handle */}
                                           <div className="flex flex-col space-y-1 opacity-60 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing" title="Drag to reorder">
-                                            <GripVertical className="w-5 h-5 text-gray-500 hover:text-purple-600" />
+                                            <GripVertical className="w-4 h-4 text-gray-500 hover:text-purple-600" />
                                           </div>
                                           
                                           {/* Module Number */}
-                                          <div className="flex-shrink-0 w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-                                            <span className="text-sm font-bold text-purple-600">{moduleIndex + 1}</span>
+                                          <div className="flex-shrink-0 w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
+                                            <span className="text-xs font-bold text-purple-600">{moduleIndex + 1}</span>
                                           </div>
                                           
                                           {/* Module Info */}
                                           <div className="flex-1">
                                             <div className="flex items-center space-x-2 mb-1">
-                                              <h6 className="text-lg font-semibold text-gray-900">{module.title}</h6>
+                                              <h6 className="text-base font-semibold text-gray-900">{module.title}</h6>
                                               {module.theme && (
-                                                <span className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-full font-medium">
+                                                <span className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded font-medium">
                                                   {module.theme}
                                                 </span>
                                               )}
                                             </div>
-                                            <p className="text-sm text-gray-600 leading-relaxed">{module.description}</p>
+                                            <p className="text-sm text-gray-600 leading-relaxed line-clamp-2">{module.description}</p>
                                           </div>
                                         </div>
                                         
                                         {/* Action Buttons */}
-                                        <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                           <button 
                                             onClick={() => handleEditModule(pathwayIndex, moduleIndex, module)}
-                                            className="relative p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 hover:shadow-md hover:scale-105 rounded-lg transition-all duration-200 group/edit" 
+                                            className="relative p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-all duration-200 group/edit" 
                                             title="Edit Module"
                                           >
-                                            <Edit className="w-4 h-4" />
-                                            <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover/edit:opacity-100 transition-opacity whitespace-nowrap z-10">
-                                              Edit Module
-                                            </span>
+                                            <Edit className="w-3.5 h-3.5" />
                                           </button>
                                           <button 
                                             onClick={() => handleAddModule(pathwayIndex, pathway.title)}
-                                            className="relative p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 hover:shadow-md hover:scale-105 rounded-lg transition-all duration-200 group/add" 
+                                            className="relative p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-all duration-200 group/add" 
                                             title="Add Module After"
                                           >
-                                            <Plus className="w-4 h-4" />
-                                            <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover/add:opacity-100 transition-opacity whitespace-nowrap z-10">
-                                              Add Module
-                                            </span>
+                                            <Plus className="w-3.5 h-3.5" />
                                           </button>
                                           <button 
                                             onClick={() => handleDeleteModule(pathwayIndex, pathway.id || '', pathway.title, moduleIndex, module)}
-                                            className="relative p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 hover:shadow-md hover:scale-105 rounded-lg transition-all duration-200 group/delete" 
+                                            className="relative p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-all duration-200 group/delete" 
                                             title="Delete Module"
                                           >
-                                            <X className="w-4 h-4" />
-                                            <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover/delete:opacity-100 transition-opacity whitespace-nowrap z-10">
-                                              Delete Module
-                                            </span>
+                                            <X className="w-3.5 h-3.5" />
                                           </button>
                                         </div>
                                       </div>
                                     </div>
 
                                     {/* Module Content */}
-                                    <div className="p-4">
-                                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    <div className="p-3">
+                                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                                         {/* Learning Objectives */}
                                         {module.learning_objectives && module.learning_objectives.length > 0 && (
                                           <div>
