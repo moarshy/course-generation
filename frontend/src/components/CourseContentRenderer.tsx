@@ -7,7 +7,7 @@ import rehypeHighlight from 'rehype-highlight';
 import mermaid from 'mermaid';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { FileText, Target, CheckCircle2, AlertCircle, Eye, Code, BookOpen, Lightbulb, Copy, Check } from 'lucide-react';
+import { FileText, Target, CheckCircle2, AlertCircle, Eye, Code, BookOpen, Lightbulb, Copy, Check, ChevronDown, ChevronRight, HelpCircle, Brain } from 'lucide-react';
 
 interface CourseContentRendererProps {
   content: string;
@@ -277,6 +277,194 @@ const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
           dangerouslySetInnerHTML={{ __html: svg }} 
         />
       </div>
+    </div>
+  );
+};
+
+interface QuestionAnswer {
+  id: string;
+  question: string;
+  answer: string;
+}
+
+const AssessmentRenderer: React.FC<{ content: string }> = ({ content }) => {
+  const [expandedQuestions, setExpandedQuestions] = React.useState<Set<string>>(new Set());
+
+  const parseQuestionsAndAnswers = (text: string): QuestionAnswer[] => {
+    const questions: QuestionAnswer[] = [];
+    
+    // Split by numbered questions (1., 2., etc.)
+    const sections = text.split(/\n\s*\d+\./);
+    
+    sections.forEach((section, index) => {
+      if (!section.trim() || index === 0) return;
+      
+      // Look for question mark to identify question
+      const questionIndex = section.indexOf('?');
+      if (questionIndex !== -1) {
+        const questionText = section.substring(0, questionIndex + 1).trim();
+        const remainingText = section.substring(questionIndex + 1).trim();
+        
+        // Clean up answer text
+        let answerText = remainingText
+          .replace(/^\*\*Answer\*\*:?\s*/i, '')
+          .replace(/^Answer:?\s*/i, '')
+          .replace(/^A:?\s*/i, '')
+          .trim();
+        
+        if (questionText && answerText) {
+          questions.push({
+            id: `q${index}`,
+            question: questionText,
+            answer: answerText
+          });
+        }
+      } else {
+        // Try to split by answer indicators
+        const answerSplit = section.split(/\n\s*(?:\*\*Answer\*\*|Answer:|A:)/i);
+        if (answerSplit.length >= 2) {
+          const questionText = answerSplit[0].trim();
+          const answerText = answerSplit[1].trim();
+          
+          if (questionText && answerText) {
+            questions.push({
+              id: `q${index}`,
+              question: questionText,
+              answer: answerText
+            });
+          }
+        }
+      }
+    });
+    
+    return questions;
+  };
+
+  const questionsAndAnswers = parseQuestionsAndAnswers(content);
+
+  const toggleQuestion = (questionId: string) => {
+    setExpandedQuestions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(questionId)) {
+        newSet.delete(questionId);
+      } else {
+        newSet.add(questionId);
+      }
+      return newSet;
+    });
+  };
+
+  if (questionsAndAnswers.length === 0) {
+    // Fallback to simple markdown if parsing fails
+    return (
+      <div className="prose max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center space-x-2">
+          <Brain className="w-5 h-5 text-purple-600" />
+          <span className="text-sm font-medium text-purple-800">
+            {questionsAndAnswers.length} Questions
+          </span>
+        </div>
+        <button
+          onClick={() => {
+            if (expandedQuestions.size === questionsAndAnswers.length) {
+              setExpandedQuestions(new Set());
+            } else {
+              setExpandedQuestions(new Set(questionsAndAnswers.map(qa => qa.id)));
+            }
+          }}
+          className="text-xs text-purple-600 hover:text-purple-800 font-medium"
+        >
+          {expandedQuestions.size === questionsAndAnswers.length ? 'Collapse All' : 'Expand All'}
+        </button>
+      </div>
+
+      {questionsAndAnswers.map((qa, index) => {
+        const isExpanded = expandedQuestions.has(qa.id);
+        
+        return (
+          <div key={qa.id} className="border border-purple-200 rounded-lg overflow-hidden bg-white shadow-sm">
+            <button
+              onClick={() => toggleQuestion(qa.id)}
+              className="w-full px-4 py-3 text-left hover:bg-purple-50 transition-colors"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-start space-x-3 flex-1">
+                  <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center mt-0.5">
+                    <span className="text-xs font-bold text-purple-700">{index + 1}</span>
+                  </div>
+                  <div className="flex items-start space-x-2 flex-1">
+                    <HelpCircle className="w-4 h-4 text-purple-600 mt-0.5 flex-shrink-0" />
+                    <p className="text-purple-900 font-medium leading-relaxed">{qa.question}</p>
+                  </div>
+                </div>
+                <div className="flex-shrink-0 ml-2">
+                  {isExpanded ? (
+                    <ChevronDown className="w-4 h-4 text-purple-600" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-purple-600" />
+                  )}
+                </div>
+              </div>
+            </button>
+            
+            {isExpanded && (
+              <div className="px-4 pb-4 border-t border-purple-100 bg-purple-25">
+                <div className="pl-9 pt-3">
+                  <div className="prose prose-sm max-w-none">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }) => (
+                          <p className="text-purple-800 mb-2 leading-relaxed">
+                            {children}
+                          </p>
+                        ),
+                        ul: ({ children }) => (
+                          <ul className="list-disc pl-4 text-purple-800 space-y-1 mb-3">
+                            {children}
+                          </ul>
+                        ),
+                        li: ({ children }) => (
+                          <li className="text-purple-800">
+                            {children}
+                          </li>
+                        ),
+                        code: ({ children, className }) => {
+                          const match = /language-(\w+)/.exec(className || '');
+                          const language = match ? match[1] : '';
+                          
+                          if (language) {
+                            const code = extractTextContent(children).replace(/\n$/, '');
+                            return <CodeBlock code={code} language={language} />;
+                          }
+                          
+                          return (
+                            <code className="bg-purple-100 px-2 py-1 rounded text-sm font-mono text-purple-900 border border-purple-200">
+                              {extractTextContent(children)}
+                            </code>
+                          );
+                        },
+                      }}
+                    >
+                      {qa.answer}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -564,35 +752,12 @@ const CourseContentRenderer: React.FC<CourseContentRendererProps> = ({
 
       {/* Assessment Section */}
       {assessment && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
-          <div className="flex items-center space-x-2 mb-3">
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-6">
+          <div className="flex items-center space-x-2 mb-4">
             <CheckCircle2 className="w-5 h-5 text-purple-600" />
             <h3 className="text-lg font-semibold text-purple-900">Assessment</h3>
           </div>
-          <div className="prose max-w-none">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                p: ({ children }) => (
-                  <p className="text-purple-800 mb-2 leading-relaxed">
-                    {children}
-                  </p>
-                ),
-                ul: ({ children }) => (
-                  <ul className="list-disc pl-6 text-purple-800 space-y-1">
-                    {children}
-                  </ul>
-                ),
-                li: ({ children }) => (
-                  <li className="text-purple-800">
-                    {children}
-                  </li>
-                ),
-              }}
-            >
-              {assessment}
-            </ReactMarkdown>
-          </div>
+          <AssessmentRenderer content={assessment} />
         </div>
       )}
 
