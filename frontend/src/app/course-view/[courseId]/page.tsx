@@ -316,13 +316,6 @@ export default function CourseViewPage() {
                 <Download className="w-4 h-4" />
                 <span>Download Course</span>
               </button>
-              <Link 
-                href={`/course-generation/${courseId}`}
-                className="flex items-center space-x-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                <FileText className="w-4 h-4" />
-                <span>Edit Course</span>
-              </Link>
             </div>
           </div>
         </div>
@@ -353,26 +346,6 @@ export default function CourseViewPage() {
                   <span className="font-semibold text-gray-900">
                     {courseContent.course_overview?.estimated_duration || '4-6 hours'}
                   </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Progress</span>
-                  <span className="font-semibold text-gray-900">
-                    N/A (Audit-only)
-                  </span>
-                </div>
-              </div>
-              
-              {/* Progress Bar */}
-              <div className="mt-4">
-                <div className="flex justify-between text-sm text-gray-600 mb-1">
-                  <span>Course Progress</span>
-                  <span>N/A</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all"
-                    style={{ width: '0%' }}
-                  ></div>
                 </div>
               </div>
             </div>

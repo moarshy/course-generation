@@ -10,7 +10,8 @@ import {
   getGenerationStatus, 
   getStage4Result,
   getStage3Result,
-  getCourseContent
+  getCourseContent,
+  downloadCourse
 } from '@/lib/api';
 import { 
   BookOpen, 
@@ -62,7 +63,8 @@ export default function Stage4Component({
     handleSubmit,
     formState: { errors },
     watch,
-    setValue
+    setValue,
+    reset
   } = useForm<Stage4FormData>({
     resolver: zodResolver(stage4Schema),
     defaultValues: {
@@ -73,6 +75,48 @@ export default function Stage4Component({
 
   const watchedComplexity = watch('selected_complexity');
   const additionalInstructions = watch('additional_instructions');
+
+  // Sync selectedComplexity state with form value
+  useEffect(() => {
+    if (watchedComplexity && watchedComplexity !== selectedComplexity) {
+      setSelectedComplexity(watchedComplexity);
+    }
+  }, [watchedComplexity, selectedComplexity]);
+
+  const handleDownloadCourse = async () => {
+    try {
+      const response = await downloadCourse(courseId);
+      
+      // Create blob URL and trigger download
+      const blob = new Blob([response.data], { type: 'application/zip' });
+      const url = window.URL.createObjectURL(blob);
+      
+      // Get filename from response headers or use default
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = 'course.zip';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create download link and click it
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      
+      // Clean up
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      console.log('Course downloaded successfully');
+    } catch (err) {
+      console.error('Download failed:', err);
+    }
+  };
 
   // Load existing data on component mount
   useEffect(() => {
@@ -89,12 +133,26 @@ export default function Stage4Component({
           const stage3Result = await getStage3Result(courseId);
           if (mounted && stage3Result) {
             setStage3Data(stage3Result);
-            // Get complexity from Stage 3 pathways
-            const stage3Complexity = stage3Result.pathways?.[0]?.complexity_level || stage3Result.pathways?.[0]?.complexity || 'intermediate';
-            setValue('selected_complexity', stage3Complexity);
+            // Get complexity from Stage 3 pathways - check both possible property names
+            const stage3Complexity = stage3Result.pathways?.[0]?.complexity_level || 
+                                   stage3Result.pathways?.[0]?.complexity || 
+                                   'intermediate';
+            console.log('Stage 3 complexity found:', stage3Complexity);
+            // Reset form with new complexity value
+            reset({
+              selected_complexity: stage3Complexity,
+              additional_instructions: ''
+            });
+            setSelectedComplexity(stage3Complexity);
           }
         } catch (err) {
           console.log('Stage 3 data not available, using default complexity');
+          // Ensure default complexity is set
+          reset({
+            selected_complexity: 'intermediate',
+            additional_instructions: ''
+          });
+          setSelectedComplexity('intermediate');
         }
         
         if (status?.stage_statuses?.COURSE_GENERATION === 'completed') {
@@ -109,6 +167,14 @@ export default function Stage4Component({
             try {
               const content = await getCourseContent(courseId);
               setCourseContent(content);
+              // Try to get complexity from course content
+              const courseComplexity = content?.course_overview?.complexity_level || 'intermediate';
+              console.log('Course complexity found:', courseComplexity);
+              setSelectedComplexity(courseComplexity);
+              reset({
+                selected_complexity: courseComplexity,
+                additional_instructions: ''
+              });
             } catch (err) {
               console.log('Course content not available yet');
             }
@@ -135,6 +201,9 @@ export default function Stage4Component({
     if (isStarting) {
       return; // Prevent multiple starts
     }
+    
+    console.log('Starting course generation with data:', data);
+    console.log('Selected complexity:', data.selected_complexity);
     
     setIsLoading(true);
     setIsStarting(true);
@@ -275,8 +344,8 @@ export default function Stage4Component({
                   </div>
                   <div>
                     <span className="text-gray-500">Stage 3 Complexity:</span>
-                    <span className={`px-2 py-1 text-xs rounded-full border ml-1 ${getComplexityColor(stage3Data.pathways?.[0]?.complexity || 'intermediate')}`}>
-                      {stage3Data.pathways?.[0]?.complexity || 'intermediate'}
+                    <span className={`px-2 py-1 text-xs rounded-full border ml-1 ${getComplexityColor(stage3Data.pathways?.[0]?.complexity_level || stage3Data.pathways?.[0]?.complexity || 'intermediate')}`}>
+                      {stage3Data.pathways?.[0]?.complexity_level || stage3Data.pathways?.[0]?.complexity || 'intermediate'}
                     </span>
                   </div>
                 </div>
@@ -288,6 +357,9 @@ export default function Stage4Component({
               <div>
                 <label htmlFor="selected_complexity" className="block text-sm font-semibold text-gray-900 mb-3">
                   Content Complexity Level
+                  <span className="text-xs text-gray-500 ml-2">
+                    (Currently: {watchedComplexity || 'intermediate'})
+                  </span>
                 </label>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {['beginner', 'intermediate', 'advanced'].map((level) => (
@@ -365,25 +437,14 @@ export default function Stage4Component({
       )}
 
       {/* Status Display */}
-      {hasStarted && (
+      {hasStarted && !isComplete && (
         <div className="mb-8">
           <div className={`border rounded-xl p-6 ${
-            isComplete ? 'bg-green-50 border-green-200' : 
             pollingStatus ? 'bg-blue-50 border-blue-200' : 
             'bg-red-50 border-red-200'
           }`}>
             <div className="flex items-center space-x-3">
-              {isComplete ? (
-                <>
-                  <CheckCircle className="w-6 h-6 text-green-600" />
-                  <div>
-                    <h3 className="text-lg font-semibold text-green-900">Course Generation Complete!</h3>
-                    <p className="text-green-700">
-                      Successfully generated course content with complexity level: {selectedComplexity}
-                    </p>
-                  </div>
-                </>
-              ) : pollingStatus ? (
+              {pollingStatus ? (
                 <>
                   <Clock className="w-6 h-6 text-blue-600 animate-pulse" />
                   <div>
@@ -495,73 +556,50 @@ export default function Stage4Component({
           </div>
 
           {/* Action Buttons */}
-          <div className="bg-white rounded-2xl border border-gray-200 p-8 shadow-lg">
-            <div className="text-center mb-8">
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">What's Next?</h3>
-              <p className="text-gray-600">Your course is ready! Choose what you'd like to do next.</p>
+          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-lg">
+            <div className="text-center mb-6">
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Course Ready!</h3>
+              <p className="text-gray-600">Your course is ready to view or download.</p>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Primary Action - View Course */}
-              <div className="md:col-span-1">
-                <button
-                  onClick={() => window.location.href = `/course-view/${courseId}`}
-                  className="w-full group relative overflow-hidden bg-gradient-to-r from-green-600 to-emerald-600 text-white font-bold py-6 px-8 rounded-2xl hover:from-green-700 hover:to-emerald-700 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
-                >
-                  <div className="absolute inset-0 bg-gradient-to-r from-green-400 to-emerald-400 opacity-0 group-hover:opacity-20 transition-opacity duration-300"></div>
-                  <div className="relative flex flex-col items-center space-y-3">
-                    <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
-                      <BookOpen className="w-6 h-6" />
-                    </div>
-                    <div className="text-center">
-                      <div className="text-lg font-bold">View Course</div>
-                      <div className="text-sm text-green-100">Start learning now</div>
-                    </div>
+              <button
+                onClick={() => window.location.href = `/course-view/${courseId}`}
+                className="w-full group relative overflow-hidden bg-gradient-to-r from-green-600 to-emerald-600 text-white font-bold py-4 px-6 rounded-xl hover:from-green-700 hover:to-emerald-700 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl"
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-green-400 to-emerald-400 opacity-0 group-hover:opacity-20 transition-opacity duration-300"></div>
+                <div className="relative flex items-center justify-center space-x-3">
+                  <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center">
+                    <BookOpen className="w-4 h-4" />
                   </div>
-                </button>
-              </div>
+                  <div className="text-center">
+                    <div className="text-lg font-bold">View Course</div>
+                  </div>
+                </div>
+              </button>
               
-              {/* Secondary Actions */}
-              <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <button
-                  onClick={() => window.open(stage4Data.course_summary.export_path, '_blank')}
-                  className="flex items-center space-x-4 p-6 bg-gray-50 hover:bg-gray-100 rounded-2xl border border-gray-200 transition-all duration-200 hover:shadow-md group"
-                  disabled={!stage4Data.course_summary.export_path}
-                >
-                  <div className="w-12 h-12 bg-gray-100 group-hover:bg-gray-200 rounded-xl flex items-center justify-center transition-colors">
-                    <FileText className="w-6 h-6 text-gray-600" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-semibold text-gray-900">View Course Files</div>
-                    <div className="text-sm text-gray-600">Access raw content</div>
-                  </div>
-                </button>
-                
-                                 <button
-                   onClick={() => {
-                     // Handle download functionality
-                     console.log('Download course clicked');
-                   }}
-                   className="flex items-center space-x-4 p-6 bg-blue-50 hover:bg-blue-100 rounded-2xl border border-blue-200 transition-all duration-200 hover:shadow-md group"
-                 >
-                  <div className="w-12 h-12 bg-blue-100 group-hover:bg-blue-200 rounded-xl flex items-center justify-center transition-colors">
-                    <Download className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-semibold text-gray-900">Download Course</div>
-                    <div className="text-sm text-gray-600">Save to your device</div>
-                  </div>
-                </button>
-              </div>
+              {/* Download Course */}
+              <button
+                onClick={handleDownloadCourse}
+                className="w-full flex items-center justify-center space-x-3 py-4 px-6 bg-blue-50 hover:bg-blue-100 rounded-xl border border-blue-200 transition-all duration-200 hover:shadow-md group"
+              >
+                <div className="w-8 h-8 bg-blue-100 group-hover:bg-blue-200 rounded-full flex items-center justify-center transition-colors">
+                  <Download className="w-4 h-4 text-blue-600" />
+                </div>
+                <div className="text-left">
+                  <div className="font-semibold text-gray-900">Download Course</div>
+                </div>
+              </button>
             </div>
             
             {/* Course Complete Button */}
-            <div className="mt-8 text-center">
+            <div className="mt-6 text-center">
               <button
                 onClick={onStageComplete}
-                className="inline-flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold rounded-2xl hover:from-emerald-700 hover:to-teal-700 shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
+                className="inline-flex items-center space-x-3 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold rounded-xl hover:from-emerald-700 hover:to-teal-700 shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
               >
-                <CheckCircle className="w-6 h-6" />
+                <CheckCircle className="w-5 h-5" />
                 <span>Mark Course Complete</span>
               </button>
             </div>

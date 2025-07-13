@@ -487,25 +487,14 @@ export default function Stage3Component({
       )}
 
       {/* Status Display */}
-      {hasStarted && (
+      {hasStarted && !isComplete && (
         <div className="mb-8">
           <div className={`border rounded-xl p-6 ${
-            isComplete ? 'bg-green-50 border-green-200' : 
             pollingStatus ? 'bg-blue-50 border-blue-200' : 
             'bg-red-50 border-red-200'
           }`}>
             <div className="flex items-center space-x-3">
-              {isComplete ? (
-                <>
-                  <CheckCircle className="w-6 h-6 text-green-600" />
-                  <div>
-                    <h3 className="text-lg font-semibold text-green-900">Pathway Generation Complete</h3>
-                    <p className="text-green-700">
-                      Successfully generated learning pathways with complexity level: {selectedComplexity}
-                    </p>
-                  </div>
-                </>
-              ) : pollingStatus ? (
+              {pollingStatus ? (
                 <>
                   <Clock className="w-6 h-6 text-blue-600 animate-pulse" />
                   <div>
