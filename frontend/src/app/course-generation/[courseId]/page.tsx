@@ -8,6 +8,7 @@ import StagesSidebar from '@/components/course-generation/StagesSidebar';
 import Stage1Component from '@/components/course-generation/Stage1Component';
 import Stage2Component from '@/components/course-generation/Stage2Component';
 import Stage3Component from '@/components/course-generation/Stage3Component';
+import Stage4Component from '@/components/course-generation/Stage4Component';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 
@@ -139,10 +140,15 @@ export default function CourseGenerationPage() {
         );
       case 'stage4':
         return (
-          <div className="text-center py-12">
-            <div className="text-gray-500 mb-4">🚧 Coming Soon</div>
-            <p className="text-gray-600">Stage 4 - Course Content Generation</p>
-          </div>
+          <Stage4Component
+            courseId={courseId}
+            course={course}
+            onStatusUpdate={handleStatusUpdate}
+            onStageComplete={() => {
+              // Stage 4 is the final stage - course generation is complete
+              console.log('Course generation completed successfully!');
+            }}
+          />
         );
       default:
         return null;

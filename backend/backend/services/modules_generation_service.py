@@ -74,6 +74,13 @@ class ModulesGenerationService(BaseService):
                     "generated_at": content.generated_at.isoformat() if content.generated_at else None
                 })
             
+            # Auto-export course if not already exported
+            if not generated_course.export_path and module_list:
+                export_path = self.export_course_content(course_id)
+                if export_path:
+                    generated_course.export_path = export_path
+                    db.commit()
+            
             return {
                 "course_id": course_id,
                 "title": course.title if course else "Generated Course",
@@ -92,6 +99,96 @@ class ModulesGenerationService(BaseService):
             return {"error": str(e)}
         finally:
             db.close()
+    
+    def export_course_content(self, course_id: str) -> Optional[str]:
+        """Export course content to files and return the export path"""
+        try:
+            from pathlib import Path
+            import json
+            from backend.core.config import settings
+            
+            # Create export directory
+            export_dir = Path(settings.ROOT_DATA_DIR) / "exports" / course_id
+            export_dir.mkdir(parents=True, exist_ok=True)
+            
+            db = get_db_session()
+            try:
+                # Get course info
+                course = db.query(Course).filter(Course.course_id == course_id).first()
+                if not course:
+                    return None
+                
+                # Get generated course
+                generated_course = db.query(GeneratedCourse).filter(
+                    GeneratedCourse.course_id == course_id
+                ).first()
+                if not generated_course:
+                    return None
+                
+                # Get pathways and modules
+                pathways = db.query(Pathway).filter(Pathway.course_id == course_id).all()
+                
+                # Collect all modules and their content
+                course_modules = {}
+                total_modules = 0
+                
+                for pathway in pathways:
+                    modules = db.query(Module).filter(Module.pathway_id == pathway.id).order_by(Module.sequence_order).all()
+                    
+                    for module in modules:
+                        # Get module content
+                        content = db.query(ModuleContent).filter(ModuleContent.module_id == module.id).first()
+                        
+                        if content:
+                            course_modules[f"module_{module.id}"] = {
+                                "title": module.title,
+                                "content": f"{content.introduction}\n\n{content.main_content}\n\n{content.conclusion}",  # Keep combined for backward compatibility
+                                "introduction": content.introduction,
+                                "main_content": content.main_content,
+                                "conclusion": content.conclusion,
+                                "learning_objectives": json.loads(module.learning_objectives) if module.learning_objectives else [],
+                                "theme": "General",  # Default theme
+                                "sequence_order": module.sequence_order,
+                                "assessment": content.assessment,
+                                "summary": content.summary
+                            }
+                            total_modules += 1
+                
+                # Create course_info.json
+                course_info = {
+                    "course_overview": {
+                        "title": course.title,
+                        "description": course.description or "Generated Course Content",
+                        "total_modules": total_modules,
+                        "complexity_level": pathways[0].complexity_level if pathways else "intermediate",
+                        "estimated_duration": pathways[0].estimated_duration if pathways else "4-6 hours"
+                    },
+                    "modules": course_modules
+                }
+                
+                # Write course_info.json
+                course_info_path = export_dir / "course_info.json"
+                with open(course_info_path, 'w', encoding='utf-8') as f:
+                    json.dump(course_info, f, indent=2, ensure_ascii=False)
+                
+                # Create individual module files
+                for module_id, module_data in course_modules.items():
+                    module_file = export_dir / f"{module_id}.md"
+                    with open(module_file, 'w', encoding='utf-8') as f:
+                        f.write(f"# {module_data['title']}\n\n")
+                        f.write(module_data['content'])
+                        if module_data.get('assessment'):
+                            f.write(f"\n\n## Assessment\n\n{module_data['assessment']}")
+                
+                logger.info(f"Exported course content to {export_dir}")
+                return str(export_dir)
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Failed to export course content: {e}")
+            return None
     
     def get_course_export_path(self, course_id: str) -> Optional[str]:
         """Get the export path for a generated course"""

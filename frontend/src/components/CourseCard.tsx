@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Calendar, ExternalLink, Play, Trash2, MoreVertical, Edit } from 'lucide-react';
+import { Calendar, ExternalLink, Play, Trash2, MoreVertical, Edit, Eye } from 'lucide-react';
 import { Course, CourseStatus, CourseCreate } from '@/lib/types';
 
 interface CourseCardProps {
@@ -122,6 +122,10 @@ export default function CourseCard({
     ].includes(status);
   };
 
+  const isComplete = (status: CourseStatus) => {
+    return status === CourseStatus.STAGE4_COMPLETE;
+  };
+
   const handleCardClick = () => {
     if (canContinue(course.status) || isProcessing(course.status)) {
       router.push(`/course-generation/${course.course_id}`);
@@ -152,6 +156,11 @@ export default function CourseCard({
     setIsMenuOpen(false);
     // The parent component will handle showing the delete modal
     // We'll trigger this via a callback
+  };
+
+  const handleViewCourse = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    router.push(`/course-view/${course.course_id}`);
   };
 
   return (
@@ -251,15 +260,27 @@ export default function CourseCard({
             <span>Created {formatDate(course.created_at)}</span>
           </div>
           
-          {canStartGeneration(course.status) && (
-            <button
-              onClick={handleStartGeneration}
-              className="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            >
-              <Play className="w-4 h-4 mr-1" />
-              Start Generation
-            </button>
-          )}
+          <div className="flex items-center space-x-2">
+            {canStartGeneration(course.status) && (
+              <button
+                onClick={handleStartGeneration}
+                className="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                <Play className="w-4 h-4 mr-1" />
+                Start Generation
+              </button>
+            )}
+            
+            {isComplete(course.status) && (
+              <button
+                onClick={handleViewCourse}
+                className="inline-flex items-center px-3 py-1 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+              >
+                <Eye className="w-4 h-4 mr-1" />
+                View Course
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

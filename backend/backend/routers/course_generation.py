@@ -961,30 +961,83 @@ async def get_course_content(
     course_id: str, 
     user_id: str = Depends(get_current_user_id)
 ):
-    """Get course content structure"""
+    """Get course content structure with separate sections"""
     try:
         # Verify course ownership
         if not course_service.verify_course_ownership(course_id, user_id):
             raise HTTPException(status_code=404, detail="Course not found")
         
-        # Get course export path using lean service
-        export_path = modules_service.get_course_export_path(course_id)
+        # Get course content directly from database with separate sections
+        from backend.shared.database import (
+            get_db_session, Course, GeneratedCourse, ModuleContent, Module, Pathway
+        )
         
-        if not export_path:
-            raise HTTPException(status_code=404, detail="Course content not found")
-        
-        from pathlib import Path
-        course_path = Path(export_path)
-        course_info_path = course_path / "course_info.json"
-        
-        if not course_info_path.exists():
-            raise HTTPException(status_code=404, detail="Course content not available")
-        
-        # Read course info
-        with open(course_info_path, 'r') as f:
-            course_info = json.load(f)
-        
-        return course_info
+        db = get_db_session()
+        try:
+            # Get course info
+            course = db.query(Course).filter(Course.course_id == course_id).first()
+            if not course:
+                raise HTTPException(status_code=404, detail="Course not found")
+            
+            # Get generated course
+            generated_course = db.query(GeneratedCourse).filter(
+                GeneratedCourse.course_id == course_id
+            ).first()
+            if not generated_course:
+                raise HTTPException(status_code=404, detail="Course content not found")
+            
+            # Get pathways and modules with content
+            pathways = db.query(Pathway).filter(Pathway.course_id == course_id).all()
+            
+            course_modules = {}
+            total_modules = 0
+            
+            for pathway in pathways:
+                modules = db.query(Module).filter(
+                    Module.pathway_id == pathway.id
+                ).order_by(Module.sequence_order).all()
+                
+                for module in modules:
+                    # Get module content
+                    content = db.query(ModuleContent).filter(
+                        ModuleContent.module_id == module.id
+                    ).first()
+                    
+                    if content:
+                        import json
+                        # Combine content for backward compatibility
+                        combined_content = f"{content.introduction or ''}\n\n{content.main_content or ''}\n\n{content.conclusion or ''}".strip()
+                        
+                        course_modules[f"module_{module.id}"] = {
+                            "title": module.title,
+                            "content": combined_content,
+                            "introduction": content.introduction,
+                            "main_content": content.main_content,
+                            "conclusion": content.conclusion,
+                            "learning_objectives": json.loads(module.learning_objectives) if module.learning_objectives else [],
+                            "theme": "General",  # Default theme
+                            "sequence_order": module.sequence_order,
+                            "assessment": content.assessment,
+                            "summary": content.summary
+                        }
+                        total_modules += 1
+            
+            # Build course info response
+            course_info = {
+                "course_overview": {
+                    "title": course.title,
+                    "description": course.description or "Generated Course Content",
+                    "total_modules": total_modules,
+                    "complexity_level": pathways[0].complexity_level if pathways else "intermediate",
+                    "estimated_duration": pathways[0].estimated_duration if pathways else "4-6 hours"
+                },
+                "modules": course_modules
+            }
+            
+            return course_info
+            
+        finally:
+            db.close()
         
     except HTTPException:
         raise
