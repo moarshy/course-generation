@@ -78,6 +78,7 @@ class LearningPathwayService(BaseService):
                         "description": module.description,
                         "sequence_order": module.sequence_order,
                         "learning_objectives": json.loads(module.learning_objectives) if module.learning_objectives else [],
+                        "documents": json.loads(module.documents) if module.documents else [],  # Add document paths
                         "estimated_time": module.estimated_time,
                         "theme": "General"  # Add theme field that frontend expects
                     })
@@ -99,7 +100,8 @@ class LearningPathwayService(BaseService):
             return {
                 "pathways": pathway_list,
                 "total_pathways": len(pathway_list),
-                "generation_complete": len(pathway_list) > 0
+                "total_documents": sum(len(module.get("documents", [])) for pathway in pathway_list for module in pathway.get("modules", [])),
+                "repo_name": "Documentation"  # You might want to get this from course metadata
             }
             
         except Exception as e:
@@ -108,23 +110,35 @@ class LearningPathwayService(BaseService):
         finally:
             db.close()
     
-    def save_pathway_selection(self, course_id: str, selected_pathway_id: str) -> bool:
-        """Save user's pathway selection to database"""
+    def update_pathway(self, course_id: str, pathway_id: str, title: str = None, 
+                      description: str = None, complexity_level: str = None, 
+                      estimated_duration: str = None) -> bool:
+        """Update pathway details"""
         db = get_db_session()
         try:
-            selection = Stage3Selection(
-                course_id=course_id,
-                selected_pathway_id=selected_pathway_id
-            )
-            db.merge(selection)
-            db.commit()
+            pathway = db.query(Pathway).filter(
+                Pathway.id == pathway_id,
+                Pathway.course_id == course_id
+            ).first()
             
-            logger.info(f"Saved pathway selection for course {course_id}: {selected_pathway_id}")
+            if not pathway:
+                return False
+            
+            if title:
+                pathway.title = title
+            if description:
+                pathway.description = description
+            if complexity_level:
+                pathway.complexity_level = complexity_level
+            if estimated_duration:
+                pathway.estimated_duration = estimated_duration
+            
+            db.commit()
             return True
             
         except Exception as e:
-            logger.error(f"Failed to save pathway selection: {e}")
             db.rollback()
+            logger.error(f"Failed to update pathway: {e}")
             return False
         finally:
             db.close()
@@ -175,56 +189,25 @@ class LearningPathwayService(BaseService):
     def get_task_status(self, course_id: str) -> Dict[str, Any]:
         """Get task status from database"""
         return super().get_task_status(course_id, 'stage3')
-    
-    # Module Management Methods
-    
-    def add_module(self, course_id: str, pathway_id: str, title: str, 
-                   description: str, learning_objectives: List[str] = None) -> bool:
-        """Add a new module to a pathway"""
+
+    def update_module(self, course_id: str, pathway_id: str, module_id: str, 
+                     title: str = None, description: str = None, 
+                     learning_objectives: List[str] = None,
+                     linked_documents: List[str] = None,
+                     theme: str = None,
+                     target_complexity: str = None) -> bool:
+        """Update module details"""
         db = get_db_session()
         try:
-            # Get the pathway to verify it exists and get next sequence order
+            # Verify the pathway belongs to the course
             pathway = db.query(Pathway).filter(
                 Pathway.id == pathway_id,
                 Pathway.course_id == course_id
             ).first()
             
             if not pathway:
-                logger.error(f"Pathway {pathway_id} not found for course {course_id}")
                 return False
             
-            # Get next sequence order
-            max_order = db.query(Module).filter(Module.pathway_id == pathway_id).count()
-            
-            # Create new module
-            import json
-            new_module = Module(
-                pathway_id=pathway_id,
-                title=title,
-                description=description,
-                sequence_order=max_order,
-                learning_objectives=json.dumps(learning_objectives or [])
-            )
-            
-            db.add(new_module)
-            db.commit()
-            
-            logger.info(f"Added module '{title}' to pathway {pathway_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to add module: {e}")
-            db.rollback()
-            return False
-        finally:
-            db.close()
-    
-    def update_module(self, course_id: str, pathway_id: str, module_id: str, 
-                     title: str = None, description: str = None, 
-                     learning_objectives: List[str] = None) -> bool:
-        """Update an existing module"""
-        db = get_db_session()
-        try:
             # Find the module
             module = db.query(Module).filter(
                 Module.id == module_id,
@@ -232,34 +215,88 @@ class LearningPathwayService(BaseService):
             ).first()
             
             if not module:
-                logger.error(f"Module {module_id} not found in pathway {pathway_id}")
                 return False
             
-            # Update fields if provided
-            if title is not None:
+            # Update fields
+            if title:
                 module.title = title
-            if description is not None:
+            if description:
                 module.description = description
             if learning_objectives is not None:
                 import json
                 module.learning_objectives = json.dumps(learning_objectives)
+            if linked_documents is not None:
+                import json
+                module.documents = json.dumps(linked_documents)
+            # Note: theme and target_complexity are not stored in the current Module model
+            # They would need to be added as columns if needed
             
             db.commit()
-            
-            logger.info(f"Updated module {module_id}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to update module: {e}")
             db.rollback()
+            logger.error(f"Failed to update module: {e}")
+            return False
+        finally:
+            db.close()
+    
+    def add_module(self, course_id: str, pathway_id: str, title: str, 
+                  description: str, learning_objectives: List[str] = None) -> bool:
+        """Add new module to pathway"""
+        db = get_db_session()
+        try:
+            # Verify the pathway belongs to the course
+            pathway = db.query(Pathway).filter(
+                Pathway.id == pathway_id,
+                Pathway.course_id == course_id
+            ).first()
+            
+            if not pathway:
+                return False
+            
+            # Get next sequence order
+            max_order = db.query(Module.sequence_order).filter(
+                Module.pathway_id == pathway_id
+            ).order_by(Module.sequence_order.desc()).first()
+            
+            next_order = (max_order[0] + 1) if max_order else 0
+            
+            # Create new module
+            import json
+            new_module = Module(
+                pathway_id=pathway_id,
+                title=title,
+                description=description,
+                sequence_order=next_order,
+                learning_objectives=json.dumps(learning_objectives or []),
+                documents=json.dumps([])  # Empty documents initially
+            )
+            
+            db.add(new_module)
+            db.commit()
+            return True
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to add module: {e}")
             return False
         finally:
             db.close()
     
     def delete_module(self, course_id: str, pathway_id: str, module_id: str) -> bool:
-        """Delete a module from a pathway"""
+        """Delete module from pathway"""
         db = get_db_session()
         try:
+            # Verify the pathway belongs to the course
+            pathway = db.query(Pathway).filter(
+                Pathway.id == pathway_id,
+                Pathway.course_id == course_id
+            ).first()
+            
+            if not pathway:
+                return False
+            
             # Find and delete the module
             module = db.query(Module).filter(
                 Module.id == module_id,
@@ -267,95 +304,15 @@ class LearningPathwayService(BaseService):
             ).first()
             
             if not module:
-                logger.error(f"Module {module_id} not found in pathway {pathway_id}")
                 return False
             
-            sequence_order = module.sequence_order
             db.delete(module)
-            
-            # Reorder remaining modules
-            remaining_modules = db.query(Module).filter(
-                Module.pathway_id == pathway_id,
-                Module.sequence_order > sequence_order
-            ).all()
-            
-            for mod in remaining_modules:
-                mod.sequence_order -= 1
-            
             db.commit()
-            
-            logger.info(f"Deleted module {module_id} and reordered remaining modules")
             return True
             
         except Exception as e:
+            db.rollback()
             logger.error(f"Failed to delete module: {e}")
-            db.rollback()
-            return False
-        finally:
-            db.close()
-    
-    def rearrange_modules(self, course_id: str, pathway_id: str, module_order: List[str]) -> bool:
-        """Rearrange modules in a pathway by providing new order of module IDs"""
-        db = get_db_session()
-        try:
-            # Get all modules for this pathway
-            modules = db.query(Module).filter(Module.pathway_id == pathway_id).all()
-            module_dict = {module.id: module for module in modules}
-            
-            # Validate that all module IDs exist
-            if len(module_order) != len(modules) or not all(mid in module_dict for mid in module_order):
-                logger.error(f"Invalid module order for pathway {pathway_id}")
-                return False
-            
-            # Update sequence orders
-            for new_order, module_id in enumerate(module_order):
-                module_dict[module_id].sequence_order = new_order
-            
-            db.commit()
-            
-            logger.info(f"Rearranged modules in pathway {pathway_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to rearrange modules: {e}")
-            db.rollback()
-            return False
-        finally:
-            db.close()
-    
-    def update_pathway(self, course_id: str, pathway_id: str, title: str = None, 
-                      description: str = None, complexity_level: str = None,
-                      estimated_duration: str = None) -> bool:
-        """Update pathway details"""
-        db = get_db_session()
-        try:
-            pathway = db.query(Pathway).filter(
-                Pathway.id == pathway_id,
-                Pathway.course_id == course_id
-            ).first()
-            
-            if not pathway:
-                logger.error(f"Pathway {pathway_id} not found for course {course_id}")
-                return False
-            
-            # Update fields if provided
-            if title is not None:
-                pathway.title = title
-            if description is not None:
-                pathway.description = description
-            if complexity_level is not None:
-                pathway.complexity_level = complexity_level
-            if estimated_duration is not None:
-                pathway.estimated_duration = estimated_duration
-            
-            db.commit()
-            
-            logger.info(f"Updated pathway {pathway_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to update pathway: {e}")
-            db.rollback()
             return False
         finally:
             db.close() 

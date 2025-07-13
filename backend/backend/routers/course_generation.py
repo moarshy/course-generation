@@ -17,6 +17,7 @@ from backend.services.learning_pathway_service import LearningPathwayService
 from backend.services.modules_generation_service import ModulesGenerationService
 from backend.services.course_service import CourseService
 from backend.core.security import get_current_user_id
+from backend.shared.database import get_db_session, Pathway, Module
 
 logger = logging.getLogger(__name__)
 
@@ -456,14 +457,50 @@ async def update_module(
                 detail="Course not found"
             )
         
+        # Get the actual pathway_id and module_id from the indices
+        
+        db = get_db_session()
+        try:
+            # Get pathways for this course
+            pathways = db.query(Pathway).filter(
+                Pathway.course_id == course_id
+            ).order_by(Pathway.id).all()
+            
+            if update_request.pathway_index >= len(pathways):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid pathway index"
+                )
+            
+            pathway = pathways[update_request.pathway_index]
+            
+            # Get modules for this pathway
+            modules = db.query(Module).filter(
+                Module.pathway_id == pathway.id
+            ).order_by(Module.sequence_order).all()
+            
+            if update_request.module_index >= len(modules):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid module index"
+                )
+            
+            module = modules[update_request.module_index]
+            
+        finally:
+            db.close()
+        
         # Update module using lean service
         success = pathway_service.update_module(
             course_id,
-            update_request.pathway_id,
-            update_request.module_id,
-            title=update_request.title,
-            description=update_request.description,
-            learning_objectives=getattr(update_request, 'learning_objectives', None)
+            pathway.id,
+            module.id,
+            title=update_request.module_updates.title,
+            description=update_request.module_updates.description,
+            learning_objectives=update_request.module_updates.learning_objectives,
+            linked_documents=update_request.module_updates.linked_documents,
+            theme=update_request.module_updates.theme,
+            target_complexity=update_request.module_updates.target_complexity
         )
         
         if success:
