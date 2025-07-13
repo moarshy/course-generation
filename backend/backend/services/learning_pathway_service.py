@@ -242,7 +242,9 @@ class LearningPathwayService(BaseService):
             db.close()
     
     def add_module(self, course_id: str, pathway_id: str, title: str, 
-                  description: str, learning_objectives: List[str] = None) -> bool:
+                  description: str, learning_objectives: List[str] = None, 
+                  linked_documents: List[str] = None, theme: str = None, 
+                  target_complexity: str = None) -> bool:
         """Add new module to pathway"""
         db = get_db_session()
         try:
@@ -270,7 +272,7 @@ class LearningPathwayService(BaseService):
                 description=description,
                 sequence_order=next_order,
                 learning_objectives=json.dumps(learning_objectives or []),
-                documents=json.dumps([])  # Empty documents initially
+                documents=json.dumps(linked_documents or [])  # Use linked_documents if provided
             )
             
             db.add(new_module)
@@ -313,6 +315,49 @@ class LearningPathwayService(BaseService):
         except Exception as e:
             db.rollback()
             logger.error(f"Failed to delete module: {e}")
+            return False
+        finally:
+            db.close()
+    
+    def rearrange_modules(self, course_id: str, pathway_id: str, module_order: List[int]) -> bool:
+        """Rearrange modules in a pathway according to new order"""
+        db = get_db_session()
+        try:
+            # Verify the pathway belongs to the course
+            pathway = db.query(Pathway).filter(
+                Pathway.id == pathway_id,
+                Pathway.course_id == course_id
+            ).first()
+            
+            if not pathway:
+                return False
+            
+            # Get all modules for this pathway
+            modules = db.query(Module).filter(
+                Module.pathway_id == pathway_id
+            ).order_by(Module.sequence_order).all()
+            
+            if len(module_order) != len(modules):
+                logger.error(f"Module order length ({len(module_order)}) doesn't match modules count ({len(modules)})")
+                return False
+            
+            # Validate that module_order contains valid indices
+            if not all(0 <= idx < len(modules) for idx in module_order):
+                logger.error(f"Invalid module order indices: {module_order}")
+                return False
+            
+            # Update sequence_order for each module according to new order
+            for new_position, old_position in enumerate(module_order):
+                module = modules[old_position]
+                module.sequence_order = new_position
+            
+            db.commit()
+            logger.info(f"Successfully reordered modules for pathway {pathway_id}")
+            return True
+            
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Failed to rearrange modules: {e}")
             return False
         finally:
             db.close() 

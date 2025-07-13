@@ -535,13 +535,35 @@ async def create_module(
                 detail="Course not found"
             )
         
+        # Get the actual pathway_id from the index
+        db = get_db_session()
+        try:
+            # Get pathways for this course
+            pathways = db.query(Pathway).filter(
+                Pathway.course_id == course_id
+            ).order_by(Pathway.id).all()
+            
+            if create_request.pathway_index >= len(pathways):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid pathway index"
+                )
+            
+            pathway = pathways[create_request.pathway_index]
+            
+        finally:
+            db.close()
+        
         # Create module using lean service
         success = pathway_service.add_module(
             course_id,
-            create_request.pathway_id,
-            create_request.title,
-            create_request.description,
-            getattr(create_request, 'learning_objectives', [])
+            pathway.id,
+            create_request.module_data.title,
+            create_request.module_data.description,
+            create_request.module_data.learning_objectives or [],
+            create_request.module_data.linked_documents or [],
+            create_request.module_data.theme,
+            create_request.module_data.target_complexity
         )
         
         if success:

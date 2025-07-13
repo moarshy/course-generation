@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { DocumentSummary, ModuleSummary, UpdateModuleRequest } from '@/lib/types';
-import { getStage2Result, updateModule } from '@/lib/api';
+import { DocumentSummary, ModuleCreate, CreateModuleRequest } from '@/lib/types';
+import { getStage2Result, addModule } from '@/lib/api';
 import { 
   X, 
   Save, 
@@ -18,7 +18,7 @@ import {
   Circle
 } from 'lucide-react';
 
-const moduleEditSchema = z.object({
+const moduleCreateSchema = z.object({
   title: z.string().min(1, 'Title is required'),
   description: z.string().min(1, 'Description is required'),
   learning_objectives: z.array(z.string()).optional(),
@@ -26,27 +26,25 @@ const moduleEditSchema = z.object({
   target_complexity: z.string().optional()
 });
 
-type ModuleEditFormData = z.infer<typeof moduleEditSchema>;
+type ModuleCreateFormData = z.infer<typeof moduleCreateSchema>;
 
-interface ModuleEditModalProps {
+interface AddModuleModalProps {
   courseId: string;
   pathwayIndex: number;
-  moduleIndex: number;
-  module: ModuleSummary;
+  pathwayTitle: string;
   isOpen: boolean;
   onClose: () => void;
   onSave: () => void;
 }
 
-export default function ModuleEditModal({
+export default function AddModuleModal({
   courseId,
   pathwayIndex,
-  moduleIndex,
-  module,
+  pathwayTitle,
   isOpen,
   onClose,
   onSave
-}: ModuleEditModalProps) {
+}: AddModuleModalProps) {
   const [availableDocuments, setAvailableDocuments] = useState<DocumentSummary[]>([]);
   const [selectedDocuments, setSelectedDocuments] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,33 +59,34 @@ export default function ModuleEditModal({
     watch,
     setValue,
     reset
-  } = useForm<ModuleEditFormData>({
-    resolver: zodResolver(moduleEditSchema),
+  } = useForm<ModuleCreateFormData>({
+    resolver: zodResolver(moduleCreateSchema),
     defaultValues: {
-      title: module.title,
-      description: module.description,
-      learning_objectives: module.learning_objectives || [],
-      theme: module.theme,
+      title: '',
+      description: '',
+      learning_objectives: [],
+      theme: '',
       target_complexity: 'intermediate'
     }
   });
 
   const learningObjectives = watch('learning_objectives') || [];
 
-  // Load available documents and set initial selections
+  // Load available documents when modal opens
   useEffect(() => {
     if (isOpen) {
       loadAvailableDocuments();
-      setSelectedDocuments(module.documents || []);
+      // Reset form when modal opens
       reset({
-        title: module.title,
-        description: module.description,
-        learning_objectives: module.learning_objectives || [],
-        theme: module.theme,
+        title: '',
+        description: '',
+        learning_objectives: [],
+        theme: '',
         target_complexity: 'intermediate'
       });
+      setSelectedDocuments([]);
     }
-  }, [isOpen, module, reset]);
+  }, [isOpen, reset]);
 
   const loadAvailableDocuments = async () => {
     setLoadingDocuments(true);
@@ -127,29 +126,30 @@ export default function ModuleEditModal({
     setValue('learning_objectives', updated);
   };
 
-  const handleSave = async (data: ModuleEditFormData) => {
+  const handleSave = async (data: ModuleCreateFormData) => {
     setLoading(true);
     setError(null);
 
     try {
-      const updateRequest: UpdateModuleRequest = {
-        pathway_index: pathwayIndex,
-        module_index: moduleIndex,
-        module_updates: {
-          title: data.title,
-          description: data.description,
-          learning_objectives: data.learning_objectives?.filter(obj => obj.trim() !== '') || [],
-          linked_documents: selectedDocuments,
-          theme: data.theme,
-          target_complexity: data.target_complexity
-        }
+      const moduleData: ModuleCreate = {
+        title: data.title,
+        description: data.description,
+        learning_objectives: data.learning_objectives?.filter(obj => obj.trim() !== '') || [],
+        linked_documents: selectedDocuments,
+        theme: data.theme,
+        target_complexity: data.target_complexity
       };
 
-      await updateModule(courseId, updateRequest);
+      const createRequest: CreateModuleRequest = {
+        pathway_index: pathwayIndex,
+        module_data: moduleData
+      };
+
+      await addModule(courseId, createRequest);
       onSave();
       onClose();
     } catch (err: any) {
-      setError(err.detail || 'Failed to update module');
+      setError(err.detail || 'Failed to create module');
     } finally {
       setLoading(false);
     }
@@ -170,11 +170,11 @@ export default function ModuleEditModal({
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl w-full max-w-2xl lg:max-w-4xl max-h-[95vh] overflow-hidden shadow-2xl">
         {/* Header */}
-        <div className="bg-gradient-to-r from-purple-500 to-indigo-600 text-white p-4 sm:p-6">
+        <div className="bg-gradient-to-r from-green-500 to-emerald-600 text-white p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg sm:text-xl font-bold">Edit Module</h2>
-              <p className="text-purple-100 text-sm mt-1">Update module details and select documents</p>
+              <h2 className="text-lg sm:text-xl font-bold">Add New Module</h2>
+              <p className="text-green-100 text-sm mt-1">Add a new module to "{pathwayTitle}"</p>
             </div>
             <button
               onClick={onClose}
@@ -210,7 +210,7 @@ export default function ModuleEditModal({
                     <input
                       {...register('title')}
                       type="text"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors"
                       placeholder="Enter module title"
                     />
                     {errors.title && (
@@ -226,7 +226,7 @@ export default function ModuleEditModal({
                     <textarea
                       {...register('description')}
                       rows={3}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 resize-none transition-colors"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 resize-none transition-colors"
                       placeholder="Enter module description"
                     />
                     {errors.description && (
@@ -242,7 +242,7 @@ export default function ModuleEditModal({
                     <input
                       {...register('theme')}
                       type="text"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors"
                       placeholder="Enter module theme (e.g., Introduction, Advanced Topics)"
                     />
                   </div>
@@ -281,7 +281,7 @@ export default function ModuleEditModal({
                           type="text"
                           value={objective}
                           onChange={(e) => updateLearningObjective(index, e.target.value)}
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors"
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors"
                           placeholder="Enter learning objective"
                         />
                         <button
@@ -313,14 +313,14 @@ export default function ModuleEditModal({
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search documents by name or path..."
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-colors"
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-colors"
                   />
                 </div>
 
                 {/* Documents List */}
                 {loadingDocuments ? (
                   <div className="flex justify-center items-center py-12">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600"></div>
                     <span className="ml-3 text-gray-600">Loading documents...</span>
                   </div>
                 ) : (
@@ -329,7 +329,7 @@ export default function ModuleEditModal({
                       <p className="text-sm font-medium text-gray-700">
                         {filteredDocuments.length} document{filteredDocuments.length !== 1 ? 's' : ''} available
                         {selectedDocuments.length > 0 && (
-                          <span className="ml-2 text-purple-600">
+                          <span className="ml-2 text-green-600">
                             ({selectedDocuments.length} selected)
                           </span>
                         )}
@@ -351,13 +351,13 @@ export default function ModuleEditModal({
                             <div
                               key={doc.id}
                               className={`flex items-center space-x-3 p-3 hover:bg-gray-50 cursor-pointer transition-colors ${
-                                selectedDocuments.includes(doc.path) ? 'bg-purple-50 border-l-4 border-purple-500' : ''
+                                selectedDocuments.includes(doc.path) ? 'bg-green-50 border-l-4 border-green-500' : ''
                               }`}
                               onClick={() => handleDocumentToggle(doc.path)}
                             >
                               <div className="flex-shrink-0">
                                 {selectedDocuments.includes(doc.path) ? (
-                                  <CheckCircle className="w-5 h-5 text-purple-600" />
+                                  <CheckCircle className="w-5 h-5 text-green-600" />
                                 ) : (
                                   <Circle className="w-5 h-5 text-gray-400" />
                                 )}
@@ -379,44 +379,32 @@ export default function ModuleEditModal({
           </div>
 
           {/* Footer */}
-          <div className="border-t border-gray-200 bg-gray-50 px-4 sm:px-6 py-4">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-3 sm:space-y-0">
-              {/* Selected count on mobile/left side on desktop */}
-              <div className="text-sm text-gray-600 order-2 sm:order-1">
-                {selectedDocuments.length > 0 && (
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                    {selectedDocuments.length} document{selectedDocuments.length !== 1 ? 's' : ''} selected
-                  </span>
+          <div className="bg-gray-50 px-4 sm:px-6 py-4 border-t border-gray-200">
+            <div className="flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full sm:w-auto px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full sm:w-auto flex items-center justify-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>Creating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>Create Module</span>
+                  </>
                 )}
-              </div>
-              
-              {/* Buttons */}
-              <div className="flex space-x-3 order-1 sm:order-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="flex-1 sm:flex-none px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="flex-1 sm:flex-none flex items-center justify-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {loading ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      <span>Saving...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4" />
-                      <span>Save Changes</span>
-                    </>
-                  )}
-                </button>
-              </div>
+              </button>
             </div>
           </div>
         </form>
