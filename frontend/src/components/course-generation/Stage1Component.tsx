@@ -209,8 +209,8 @@ export default function Stage1Component({
   };
 
   return (
-    <div className="p-8">
-      <div className="mb-8">
+    <div className="p-6">
+      <div className="mb-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Stage 1: Repository Setup</h2>
         <p className="text-gray-600">
           Start by providing a GitHub repository URL to analyze and generate course content from.
@@ -218,8 +218,8 @@ export default function Stage1Component({
       </div>
 
       {/* Step 1: Repository URL */}
-      <div className="mb-8">
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+      <div className="mb-6">
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
           <div className="flex items-center space-x-3 mb-4">
             <Github className="w-6 h-6 text-blue-600" />
             <h3 className="text-lg font-semibold text-blue-900">GitHub Repository</h3>
@@ -268,97 +268,34 @@ export default function Stage1Component({
 
       {/* Status Display */}
       {hasStarted && (
-        <div className="mb-8">
+        <div className="mb-6">
           {isComplete ? (
-            /* Success State */
-            <div className="bg-green-50 border border-green-200 rounded-xl p-6">
-              <div className="flex items-center space-x-3 mb-2">
-                <CheckCircle className="w-6 h-6 text-green-600" />
-                <h3 className="text-lg font-semibold text-green-900">Repository Analysis Complete!</h3>
-              </div>
-              <p className="text-sm text-green-700">
-                Repository has been successfully cloned and analyzed.
-              </p>
-            </div>
+            /* Success State - Removed duplicate message */
+            <div className="hidden"></div>
           ) : pollingStatus ? (
-            /* Loading State with Enhanced UI */
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-8">
-              <div className="text-center mb-6">
-                <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-                  <Github className="w-8 h-8 text-blue-600 animate-pulse" />
-                </div>
-                <h3 className="text-xl font-bold text-blue-900 mb-2">Analyzing Repository</h3>
-                <p className="text-sm text-blue-700">
-                  We're cloning and analyzing your repository to prepare it for course generation
-                </p>
-              </div>
-
-              {/* Progress Steps */}
-              <div className="space-y-4 mb-6">
-                <div className="flex items-center space-x-3">
-                  <div className="flex-shrink-0 w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center">
-                    <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-blue-900">Cloning repository from GitHub</p>
-                    <p className="text-xs text-blue-600">Downloading source code and files...</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="flex-shrink-0 w-6 h-6 bg-blue-200 rounded-full flex items-center justify-center">
-                    <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-blue-800">Scanning file structure</p>
-                    <p className="text-xs text-blue-600">Identifying folders and documents...</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="flex-shrink-0 w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
-                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-blue-700">Preparing analysis results</p>
-                    <p className="text-xs text-blue-500">Organizing content for selection...</p>
-                  </div>
+            /* Loading State - Compact */
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+              <div className="flex items-center space-x-3">
+                <Github className="w-6 h-6 text-blue-600 animate-pulse" />
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-blue-900">Analyzing Repository</p>
+                  <p className="text-xs text-blue-600">Cloning and analyzing your repository...</p>
                 </div>
               </div>
-
-              {/* Animated Progress Bar */}
-              <div className="mb-4">
-                <div className="flex justify-between text-xs text-blue-600 mb-2">
-                  <span>Progress</span>
-                  <span>Typically takes 30-60 seconds</span>
-                </div>
+              <div className="mt-3">
                 <div className="w-full bg-blue-200 rounded-full h-2">
                   <div className="bg-blue-600 h-2 rounded-full animate-pulse" style={{ width: '60%' }}></div>
-                </div>
-              </div>
-
-              {/* Tips while waiting */}
-              <div className="bg-white bg-opacity-60 rounded-lg p-4">
-                <div className="flex items-start space-x-3">
-                  <div className="flex-shrink-0 text-blue-600">💡</div>
-                  <div>
-                    <p className="text-sm font-medium text-blue-900 mb-1">While you wait...</p>
-                    <p className="text-xs text-blue-700">
-                      Our AI will analyze your repository structure and suggest the most relevant folders and files for course generation. 
-                      You'll be able to customize these selections in the next step.
-                    </p>
-                  </div>
                 </div>
               </div>
             </div>
           ) : (
             /* Error State */
-            <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
               <div className="flex items-center space-x-3 mb-2">
-                <AlertCircle className="w-6 h-6 text-red-600" />
-                <h3 className="text-lg font-semibold text-red-900">Analysis Failed</h3>
+                <AlertCircle className="w-5 h-5 text-red-600" />
+                <h3 className="text-base font-semibold text-red-900">Analysis Failed</h3>
               </div>
-              <p className="text-sm text-red-700 mb-4">{error}</p>
+              <p className="text-sm text-red-700 mb-3">{error}</p>
               <button
                 onClick={() => {
                   setHasStarted(false);
@@ -375,18 +312,18 @@ export default function Stage1Component({
 
       {/* Step 2: Folder and File Selection */}
       {isComplete && stage1Data && (
-        <div className="mb-8">
-          <div className="bg-gray-50 border border-gray-200 rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+        <div className="mb-6">
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+            <h3 className="text-base font-semibold text-gray-900 mb-3">
               Select Content to Include
             </h3>
-            <p className="text-sm text-gray-600 mb-6">
+            <p className="text-sm text-gray-600 mb-4">
               Choose which folders and files to include in your course generation.
             </p>
 
             {/* Repository Info */}
-            <div className="mb-6 p-4 bg-white rounded-lg border">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div className="mb-4 p-3 bg-white rounded-lg border">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                 <div>
                   <div className="font-semibold text-gray-900">Repository</div>
                   <div className="text-gray-600">{stage1Data.repo_name}</div>
@@ -407,13 +344,13 @@ export default function Stage1Component({
             </div>
 
             {/* Folder Selection */}
-            <div className="mb-6">
-              <h4 className="text-base font-semibold text-gray-900 mb-3">Available Folders</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="mb-4">
+              <h4 className="text-sm font-semibold text-gray-900 mb-2">Available Folders</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                 {stage1Data.available_folders.map((folder) => (
                   <label
                     key={folder}
-                    className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                    className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50 cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -421,7 +358,7 @@ export default function Stage1Component({
                       onChange={() => handleFolderToggle(folder)}
                       className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
                     />
-                    <Folder className="w-5 h-5 text-blue-600" />
+                    <Folder className="w-4 h-4 text-blue-600" />
                     <span className="text-sm font-medium text-gray-900">{folder}</span>
                   </label>
                 ))}
@@ -430,18 +367,18 @@ export default function Stage1Component({
 
             {/* Overview Document Selection */}
             {stage1Data.available_files.length > 0 && (
-              <div className="mb-6">
-                <h4 className="text-base font-semibold text-gray-900 mb-3">
+              <div className="mb-4">
+                <h4 className="text-sm font-semibold text-gray-900 mb-2">
                   Overview Document (Optional)
                 </h4>
-                <p className="text-sm text-gray-600 mb-3">
+                <p className="text-sm text-gray-600 mb-2">
                   Select a document to serve as the main overview for your course.
                 </p>
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                   {stage1Data.available_files.map((doc) => (
                     <label
                       key={doc}
-                      className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                      className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50 cursor-pointer"
                     >
                       <input
                         type="radio"
@@ -450,7 +387,7 @@ export default function Stage1Component({
                         onChange={() => handleOverviewDocChange(doc)}
                         className="w-4 h-4 text-blue-600 focus:ring-blue-500"
                       />
-                      <File className="w-5 h-5 text-green-600" />
+                      <File className="w-4 h-4 text-green-600" />
                       <span className="text-sm font-medium text-gray-900">{doc}</span>
                     </label>
                   ))}
@@ -495,7 +432,7 @@ export default function Stage1Component({
 
       {/* Error Display */}
       {error && (
-        <div className="mb-8">
+        <div className="mb-6">
           <div className="bg-red-50 border border-red-200 rounded-xl p-4">
             <div className="flex items-center space-x-2">
               <AlertCircle className="w-5 h-5 text-red-600" />
