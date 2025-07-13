@@ -7,6 +7,7 @@ import { getCourse, getGenerationStatus } from '@/lib/api';
 import StagesSidebar from '@/components/course-generation/StagesSidebar';
 import Stage1Component from '@/components/course-generation/Stage1Component';
 import Stage2Component from '@/components/course-generation/Stage2Component';
+import Stage3Component from '@/components/course-generation/Stage3Component';
 import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 
@@ -40,10 +41,12 @@ export default function CourseGenerationPage() {
           if (statusData.stage_statuses.COURSE_GENERATION === 'completed') {
             setCurrentStage('stage4');
           } else if (statusData.stage_statuses.PATHWAY_BUILDING === 'completed') {
-            setCurrentStage('stage3');
+            setCurrentStage('stage4');
           } else if (statusData.stage_statuses.DOCUMENT_ANALYSIS === 'completed') {
-            setCurrentStage('stage2');
+            setCurrentStage('stage3');
           } else if (statusData.stage_statuses.CLONE_REPO === 'completed') {
+            setCurrentStage('stage2');
+          } else {
             setCurrentStage('stage1');
           }
         }
@@ -127,10 +130,12 @@ export default function CourseGenerationPage() {
         );
       case 'stage3':
         return (
-          <div className="text-center py-12">
-            <div className="text-gray-500 mb-4">🚧 Coming Soon</div>
-            <p className="text-gray-600">Stage 3 - Learning Pathway Generation</p>
-          </div>
+          <Stage3Component
+            courseId={courseId}
+            course={course}
+            onStatusUpdate={handleStatusUpdate}
+            onStageComplete={() => handleStageChange('stage4')}
+          />
         );
       case 'stage4':
         return (
