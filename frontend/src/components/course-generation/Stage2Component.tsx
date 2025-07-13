@@ -355,90 +355,33 @@ export default function Stage2Component({
       {/* Stage 2 will auto-start when Stage 1 is complete */}
 
       {/* Status Display */}
-      {hasStarted && (
+      {hasStarted && !isComplete && (
         <div className="mb-8">
-          {isComplete ? (
-            /* Success State */
-            <div className="bg-green-50 border border-green-200 rounded-xl p-6">
-              <div className="flex items-center space-x-3 mb-2">
-                <CheckCircle className="w-6 h-6 text-green-600" />
-                <h3 className="text-lg font-semibold text-green-900">Document Analysis Complete!</h3>
-              </div>
-              <p className="text-sm text-green-700">
-                All documents have been successfully analyzed and processed.
-              </p>
-            </div>
-          ) : pollingStatus ? (
-            /* Enhanced Loading State */
-            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-8">
-              <div className="text-center mb-6">
-                <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-100 rounded-full mb-4">
-                  <FileText className="w-8 h-8 text-emerald-600 animate-pulse" />
+          {pollingStatus ? (
+            /* Compact Loading State */
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-4">
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-emerald-600 animate-pulse" />
                 </div>
-                <h3 className="text-xl font-bold text-emerald-900 mb-2">Analyzing Documents</h3>
-                <p className="text-sm text-emerald-700">
-                  Our AI is processing and extracting key information from your selected documents
-                </p>
-              </div>
-
-              {/* Progress Steps */}
-              <div className="space-y-4 mb-6">
-                <div className="flex items-center space-x-3">
-                  <div className="flex-shrink-0 w-6 h-6 bg-emerald-600 rounded-full flex items-center justify-center">
-                    <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-emerald-900">Reading document contents</p>
-                    <p className="text-xs text-emerald-600">Processing text and extracting meaningful content...</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="flex-shrink-0 w-6 h-6 bg-emerald-200 rounded-full flex items-center justify-center">
-                    <div className="w-2 h-2 bg-emerald-600 rounded-full animate-bounce"></div>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-emerald-800">Analyzing content structure</p>
-                    <p className="text-xs text-emerald-600">Identifying key concepts and learning objectives...</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center space-x-3">
-                  <div className="flex-shrink-0 w-6 h-6 bg-emerald-100 rounded-full flex items-center justify-center">
-                    <div className="w-2 h-2 bg-emerald-400 rounded-full"></div>
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-emerald-700">Generating summaries</p>
-                    <p className="text-xs text-emerald-500">Creating structured content for course generation...</p>
-                  </div>
+                <div>
+                  <h3 className="text-lg font-bold text-emerald-900">Analyzing Documents</h3>
+                  <p className="text-sm text-emerald-700">Processing and extracting key information...</p>
                 </div>
               </div>
 
-              {/* Animated Progress Bar */}
-              <div className="mb-4">
+              {/* Simple Progress Bar */}
+              <div className="mb-3">
                 <div className="flex justify-between text-xs text-emerald-600 mb-2">
-                  <span>Analysis Progress</span>
-                  <span>This may take 2-5 minutes</span>
+                  <span>Analysis in progress...</span>
+                  <span>2-5 minutes</span>
                 </div>
                 <div className="w-full bg-emerald-200 rounded-full h-2">
                   <div className="bg-emerald-600 h-2 rounded-full animate-pulse" style={{ width: '75%' }}></div>
                 </div>
               </div>
 
-              {/* Tips while waiting */}
-              <div className="bg-white bg-opacity-60 rounded-lg p-4">
-                <div className="flex items-start space-x-3">
-                  <div className="flex-shrink-0 text-emerald-600">🧠</div>
-                  <div>
-                    <p className="text-sm font-medium text-emerald-900 mb-1">What's happening?</p>
-                    <p className="text-xs text-emerald-700">
-                      Our AI is carefully reading through each document to understand the content structure, 
-                      extract key concepts, and prepare them for intelligent course generation. The analysis 
-                      considers your selected complexity level to ensure appropriate content depth.
-                    </p>
-                  </div>
-                </div>
-              </div>
+
             </div>
           ) : (
             /* Error State */
@@ -466,12 +409,12 @@ export default function Stage2Component({
       {isComplete && stage2Data && (
         <div className="mb-8">
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-            {/* Enhanced Results Header */}
-            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-100 p-6">
+            {/* Compact Results Header */}
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-emerald-100 p-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <div className="flex items-center justify-center w-12 h-12 bg-emerald-100 rounded-full">
-                    <CheckCircle className="w-6 h-6 text-emerald-600" />
+                <div className="flex items-center space-x-3">
+                  <div className="flex items-center justify-center w-10 h-10 bg-emerald-100 rounded-full">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" />
                   </div>
                   <div>
                     <h3 className="text-xl font-bold text-emerald-900">Analysis Complete!</h3>
@@ -495,40 +438,40 @@ export default function Stage2Component({
               </div>
             </div>
 
-            <div className="p-6">
-              {/* Enhanced Search Bar */}
-              <div className="mb-6">
+            <div className="p-4">
+              {/* Compact Search Bar */}
+              <div className="mb-4">
                 <div className="relative">
-                  <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                   <input
                     type="text"
-                    placeholder="Search documents by name, path, or content..."
+                    placeholder="Search documents..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-12 pr-4 py-4 text-base border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-gray-50 focus:bg-white transition-colors"
+                    className="w-full pl-10 pr-4 py-3 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-gray-50 focus:bg-white transition-colors"
                   />
                 </div>
                 {searchQuery && (
-                  <p className="mt-2 text-sm text-gray-500">
+                  <p className="mt-2 text-xs text-gray-500">
                     Found {filteredDocuments.length} of {stage2Data.analyzed_documents.length} documents
                   </p>
                 )}
               </div>
 
-              {/* Enhanced Documents Grid */}
-              <div className="grid gap-6 mb-8">
+              {/* Compact Documents Grid */}
+              <div className="grid gap-4 mb-6">
                 {filteredDocuments.map((doc) => (
                   <div key={doc.id} className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow">
                     {/* Document Header */}
-                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200 p-5">
+                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200 p-3">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-4">
-                          <div className="flex items-center justify-center w-10 h-10 bg-blue-100 rounded-lg">
-                            <FileText className="w-5 h-5 text-blue-600" />
+                        <div className="flex items-center space-x-3">
+                          <div className="flex items-center justify-center w-8 h-8 bg-blue-100 rounded-lg">
+                            <FileText className="w-4 h-4 text-blue-600" />
                           </div>
                           <div className="flex-1">
-                            <h4 className="font-semibold text-gray-900 text-lg">{doc.filename}</h4>
-                            <p className="text-sm text-gray-500 mt-1 font-mono break-all">{getCleanPath(doc.path)}</p>
+                            <h4 className="font-semibold text-gray-900 text-base">{doc.filename}</h4>
+                            <p className="text-xs text-gray-500 mt-1 font-mono break-all">{getCleanPath(doc.path)}</p>
                           </div>
                         </div>
                         <button
