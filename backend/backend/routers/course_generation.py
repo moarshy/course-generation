@@ -864,7 +864,7 @@ async def cancel_generation(
 async def get_stage2_progress(course_id: str = Query(..., description="Course ID")):
     """Get detailed progress for Stage 2 document analysis"""
     try:
-        # Use lean service to get task status
+        # Get basic task status from database
         task_status = doc_service.get_task_status(course_id)
         
         if task_status['status'] == 'not_started':
@@ -873,15 +873,59 @@ async def get_stage2_progress(course_id: str = Query(..., description="Course ID
                 detail="Stage 2 task not found"
             )
         
-        # Return simplified progress info from database
-        return {
-            'status': task_status['status'],
-            'progress': task_status['progress'],
-            'current_step': task_status.get('current_step', ''),
-            'error': task_status.get('error_message'),
-            'started_at': task_status.get('started_at'),
-            'completed_at': task_status.get('completed_at')
-        }
+        # Try to get detailed progress from Redis
+        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        progress_key = f"stage2_progress:{course_id}"
+        
+        try:
+            detailed_progress_data = redis_client.get(progress_key)
+            if detailed_progress_data:
+                detailed_progress = json.loads(detailed_progress_data)
+                
+                # Return detailed progress with fallback to basic status
+                return {
+                    'status': task_status['status'],
+                    'progress': task_status['progress'],
+                    'current_step': task_status.get('current_step', ''),
+                    'error': task_status.get('error_message'),
+                    'started_at': task_status.get('started_at'),
+                    'completed_at': task_status.get('completed_at'),
+                    # Detailed progress data
+                    'detailed': {
+                        'total_files': detailed_progress.get('total_files', 0),
+                        'processed_files': detailed_progress.get('processed_files', 0),
+                        'failed_files': detailed_progress.get('failed_files', 0),
+                        'current_file': detailed_progress.get('current_file', ''),
+                        'stage': detailed_progress.get('stage', ''),
+                        'stage_description': detailed_progress.get('stage_description', ''),
+                        'completed_files': detailed_progress.get('completed_files', []),
+                        'failed_files_list': detailed_progress.get('failed_files_list', []),
+                        'files_to_process': detailed_progress.get('files_to_process', [])
+                    }
+                }
+            else:
+                # No detailed progress found, return basic status
+                return {
+                    'status': task_status['status'],
+                    'progress': task_status['progress'],
+                    'current_step': task_status.get('current_step', ''),
+                    'error': task_status.get('error_message'),
+                    'started_at': task_status.get('started_at'),
+                    'completed_at': task_status.get('completed_at'),
+                    'detailed': None
+                }
+        except Exception as redis_error:
+            logger.warning(f"Failed to get detailed progress from Redis: {redis_error}")
+            # Return basic status if Redis fails
+            return {
+                'status': task_status['status'],
+                'progress': task_status['progress'],
+                'current_step': task_status.get('current_step', ''),
+                'error': task_status.get('error_message'),
+                'started_at': task_status.get('started_at'),
+                'completed_at': task_status.get('completed_at'),
+                'detailed': None
+            }
         
     except HTTPException:
         raise

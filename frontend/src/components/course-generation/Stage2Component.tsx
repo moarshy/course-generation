@@ -4,12 +4,13 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Course, GenerationStatus, Stage2Response, Stage2Input, DocumentSummary } from '@/lib/types';
+import { Course, GenerationStatus, Stage2Response, Stage2Input, DocumentSummary, Stage2Progress } from '@/lib/types';
 import { 
   startStage2, 
   getGenerationStatus, 
   getStage2Result,
-  updateStage2Document
+  updateStage2Document,
+  getStage2Progress
 } from '@/lib/api';
 import { 
   FileText, 
@@ -60,6 +61,7 @@ export default function Stage2Component({
   const [selectedComplexity, setSelectedComplexity] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [detailedProgress, setDetailedProgress] = useState<Stage2Progress | null>(null);
 
   const {
     register,
@@ -182,15 +184,24 @@ export default function Stage2Component({
     }
   };
 
-  // Poll for stage completion
+  // Poll for stage completion with detailed progress
   const pollForStageCompletion = async () => {
     const maxAttempts = 120; // 10 minutes with 5-second intervals
     let attempts = 0;
 
     const poll = async () => {
       try {
-        const status = await getGenerationStatus(courseId);
+        const [status, progress] = await Promise.all([
+          getGenerationStatus(courseId),
+          getStage2Progress(courseId).catch(() => null) // Don't fail if detailed progress is unavailable
+        ]);
+        
         onStatusUpdate(status);
+        
+        // Update detailed progress if available
+        if (progress) {
+          setDetailedProgress(progress);
+        }
 
         if (status.stage_statuses.DOCUMENT_ANALYSIS === 'completed') {
           setIsComplete(true);
@@ -358,7 +369,7 @@ export default function Stage2Component({
       {hasStarted && !isComplete && (
         <div className="mb-8">
           {pollingStatus ? (
-            /* Compact Loading State */
+            /* Detailed Loading State */
             <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-4">
               <div className="flex items-center space-x-3 mb-4">
                 <div className="flex-shrink-0 w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
@@ -366,22 +377,95 @@ export default function Stage2Component({
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-emerald-900">Analyzing Documents</h3>
-                  <p className="text-sm text-emerald-700">Processing and extracting key information...</p>
+                  <p className="text-sm text-emerald-700">
+                    {detailedProgress?.detailed?.stage_description || 'Processing and extracting key information...'}
+                  </p>
                 </div>
               </div>
 
-              {/* Simple Progress Bar */}
-              <div className="mb-3">
-                <div className="flex justify-between text-xs text-emerald-600 mb-2">
-                  <span>Analysis in progress...</span>
-                  <span>2-5 minutes</span>
-                </div>
-                <div className="w-full bg-emerald-200 rounded-full h-2">
-                  <div className="bg-emerald-600 h-2 rounded-full animate-pulse" style={{ width: '75%' }}></div>
-                </div>
-              </div>
+              {/* Progress Information */}
+              {detailedProgress?.detailed ? (
+                <div className="space-y-3">
+                  {/* Overall Progress */}
+                  <div className="mb-3">
+                    <div className="flex justify-between text-xs text-emerald-600 mb-2">
+                      <span>
+                        {detailedProgress.detailed.processed_files} of {detailedProgress.detailed.total_files} files processed
+                      </span>
+                      <span>
+                        {Math.round((detailedProgress.detailed.processed_files / detailedProgress.detailed.total_files) * 100)}% complete
+                      </span>
+                    </div>
+                    <div className="w-full bg-emerald-200 rounded-full h-2">
+                      <div 
+                        className="bg-emerald-600 h-2 rounded-full transition-all duration-300"
+                        style={{ 
+                          width: `${Math.min((detailedProgress.detailed.processed_files / detailedProgress.detailed.total_files) * 100, 100)}%` 
+                        }}
+                      ></div>
+                    </div>
+                  </div>
 
+                  {/* Current File */}
+                  {detailedProgress.detailed.current_file && (
+                    <div className="text-sm text-emerald-700 mb-2">
+                      <span className="font-medium">Current: </span>
+                      <span className="font-mono">{detailedProgress.detailed.current_file}</span>
+                    </div>
+                  )}
 
+                  {/* File List */}
+                  {detailedProgress.detailed.files_to_process && detailedProgress.detailed.files_to_process.length > 0 && (
+                    <div className="max-h-32 overflow-y-auto">
+                      <div className="space-y-1">
+                        {detailedProgress.detailed.files_to_process.map((file, index) => {
+                          const isCompleted = detailedProgress.detailed!.completed_files.includes(file);
+                          const isFailed = detailedProgress.detailed!.failed_files_list.some(f => f.includes(file));
+                          const isCurrent = detailedProgress.detailed!.current_file === file;
+                          
+                          return (
+                            <div key={index} className={`flex items-center space-x-2 text-xs px-2 py-1 rounded ${
+                              isCurrent ? 'bg-emerald-100 text-emerald-800' :
+                              isCompleted ? 'bg-green-50 text-green-700' :
+                              isFailed ? 'bg-red-50 text-red-700' :
+                              'bg-gray-50 text-gray-600'
+                            }`}>
+                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{
+                                backgroundColor: isCurrent ? '#10b981' :
+                                               isCompleted ? '#059669' :
+                                               isFailed ? '#dc2626' :
+                                               '#d1d5db'
+                              }}></span>
+                              <span className="font-mono truncate">{file}</span>
+                              {isCurrent && <span className="text-emerald-600">⏳</span>}
+                              {isCompleted && <span className="text-green-600">✅</span>}
+                              {isFailed && <span className="text-red-600">❌</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Failed Files Summary */}
+                  {detailedProgress.detailed.failed_files > 0 && (
+                    <div className="text-xs text-red-600 mt-2">
+                      ⚠️ {detailedProgress.detailed.failed_files} files failed to process
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Fallback Simple Progress Bar */
+                <div className="mb-3">
+                  <div className="flex justify-between text-xs text-emerald-600 mb-2">
+                    <span>Analysis in progress...</span>
+                    <span>2-5 minutes</span>
+                  </div>
+                  <div className="w-full bg-emerald-200 rounded-full h-2">
+                    <div className="bg-emerald-600 h-2 rounded-full animate-pulse" style={{ width: '75%' }}></div>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             /* Error State */
