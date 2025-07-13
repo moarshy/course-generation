@@ -206,6 +206,128 @@ class ModulesGenerationService(BaseService):
         finally:
             db.close()
     
+    def create_course_download(self, course_id: str) -> Optional[str]:
+        """Create a structured ZIP file for course download"""
+        import zipfile
+        import tempfile
+        import json
+        from pathlib import Path
+        
+        db = get_db_session()
+        try:
+            # Get course data
+            course = db.query(Course).filter(Course.course_id == course_id).first()
+            if not course:
+                logger.error(f"Course not found: {course_id}")
+                return None
+                
+            # Get pathways and modules
+            pathways = db.query(Pathway).filter(Pathway.course_id == course_id).all()
+            if not pathways:
+                logger.error(f"No pathways found for course: {course_id}")
+                return None
+                
+            # Create temporary directory for organizing files
+            temp_dir = Path(tempfile.mkdtemp())
+            course_dir = temp_dir / "course"
+            course_dir.mkdir(exist_ok=True)
+            
+            # Create modules directory
+            modules_dir = course_dir / "modules"
+            modules_dir.mkdir(exist_ok=True)
+            
+            # Collect all modules from all pathways
+            all_modules = []
+            for pathway in pathways:
+                pathway_modules = db.query(Module).filter(
+                    Module.pathway_id == pathway.id
+                ).order_by(Module.sequence_order).all()
+                all_modules.extend(pathway_modules)
+            
+            # Sort modules by sequence order across all pathways
+            all_modules.sort(key=lambda m: m.sequence_order)
+            
+            # Create module folders and files
+            course_learning_objectives = []
+            for i, module in enumerate(all_modules, 1):
+                # Create module folder
+                module_folder = modules_dir / f"module_{i:02d}_{module.title.replace(' ', '_').replace('/', '_')}"
+                module_folder.mkdir(exist_ok=True)
+                
+                # Get module content
+                content = db.query(ModuleContent).filter(
+                    ModuleContent.module_id == module.id
+                ).first()
+                
+                if content:
+                    # Create individual section files
+                    if content.introduction:
+                        (module_folder / "intro.md").write_text(content.introduction, encoding='utf-8')
+                    
+                    if content.main_content:
+                        (module_folder / "main.md").write_text(content.main_content, encoding='utf-8')
+                    
+                    if content.conclusion:
+                        (module_folder / "conclusion.md").write_text(content.conclusion, encoding='utf-8')
+                    
+                    if content.assessment:
+                        (module_folder / "assessment.md").write_text(content.assessment, encoding='utf-8')
+                    
+                    if content.summary:
+                        (module_folder / "summary.md").write_text(content.summary, encoding='utf-8')
+                
+                # Collect learning objectives
+                if module.learning_objectives:
+                    try:
+                        objectives = json.loads(module.learning_objectives)
+                        course_learning_objectives.extend(objectives)
+                    except json.JSONDecodeError:
+                        pass
+            
+            # Create course_info.json
+            course_info = {
+                "title": course.title,
+                "description": course.description or "Generated Course Content",
+                "learning_objectives": course_learning_objectives,
+                "total_modules": len(all_modules),
+                "complexity_level": pathways[0].complexity_level if pathways else "intermediate",
+                "estimated_duration": pathways[0].estimated_duration if pathways else "4-6 hours",
+                "created_at": course.created_at.isoformat() if course.created_at else None,
+                "modules": [
+                    {
+                        "module_id": f"module_{i:02d}_{module.title.replace(' ', '_').replace('/', '_')}",
+                        "title": module.title,
+                        "description": module.description,
+                        "learning_objectives": json.loads(module.learning_objectives) if module.learning_objectives else [],
+                        "sequence_order": module.sequence_order,
+                        "sections": ["intro.md", "main.md", "conclusion.md", "assessment.md", "summary.md"]
+                    }
+                    for i, module in enumerate(all_modules, 1)
+                ]
+            }
+            
+            # Write course_info.json
+            with open(course_dir / "course_info.json", 'w', encoding='utf-8') as f:
+                json.dump(course_info, f, indent=2, ensure_ascii=False)
+            
+            # Create ZIP file
+            zip_path = temp_dir / f"{course.title.replace(' ', '_').replace('/', '_')}.zip"
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # Walk through all files and add them to ZIP
+                for file_path in course_dir.rglob("*"):
+                    if file_path.is_file():
+                        relative_path = file_path.relative_to(course_dir)
+                        zipf.write(file_path, relative_path)
+            
+            logger.info(f"Created course download ZIP: {zip_path}")
+            return str(zip_path)
+            
+        except Exception as e:
+            logger.error(f"Failed to create course download: {e}")
+            return None
+        finally:
+            db.close()
+    
     def update_course_status(self, course_id: str, status: str) -> bool:
         """Update the status of a generated course"""
         db = get_db_session()

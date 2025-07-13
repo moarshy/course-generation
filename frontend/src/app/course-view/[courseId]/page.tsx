@@ -184,9 +184,34 @@ export default function CourseViewPage() {
   const handleDownloadCourse = async () => {
     try {
       const response = await downloadCourse(courseId);
-      // Handle download response
-      console.log('Course downloaded:', response);
-    } catch (err: any) {
+      
+      // Create blob URL and trigger download
+      const blob = new Blob([response.data], { type: 'application/zip' });
+      const url = window.URL.createObjectURL(blob);
+      
+      // Get filename from response headers or use default
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = 'course.zip';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      // Create download link and click it
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      
+      // Clean up
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      console.log('Course downloaded successfully');
+    } catch (err) {
       console.error('Download failed:', err);
     }
   };

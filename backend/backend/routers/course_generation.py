@@ -1100,25 +1100,37 @@ async def download_course(
         if not course_service.verify_course_ownership(course_id, user_id):
             raise HTTPException(status_code=404, detail="Course not found")
         
-        # Get course export path using lean service
-        export_path = modules_service.get_course_export_path(course_id)
+        # Create structured course export
+        zip_path = modules_service.create_course_download(course_id)
         
-        if not export_path:
+        if not zip_path:
             raise HTTPException(status_code=404, detail="Course content not found")
         
         from pathlib import Path
-        course_path = Path(export_path)
+        from fastapi.responses import FileResponse
+        import os
         
-        if not course_path.exists():
+        zip_file_path = Path(zip_path)
+        
+        if not zip_file_path.exists():
             raise HTTPException(status_code=404, detail="Course files not found")
         
-        # For now, return the path info
-        # In a full implementation, you'd create and return a ZIP file
-        return {
-            "message": "Course download functionality needs ZIP creation implementation",
-            "course_path": str(course_path),
-            "available_files": [f.name for f in course_path.rglob("*") if f.is_file()]
-        }
+        # Get course name for filename
+        with get_db_session() as db:
+            from backend.shared.database import Course
+            course = db.query(Course).filter(Course.course_id == course_id).first()
+            course_name = course.title if course else "course"
+        
+        # Clean course name for filename
+        import re
+        safe_name = re.sub(r'[^\w\s-]', '', course_name).strip()
+        safe_name = re.sub(r'[-\s]+', '-', safe_name)
+        
+        return FileResponse(
+            path=str(zip_file_path),
+            filename=f"{safe_name}.zip",
+            media_type="application/zip"
+        )
         
     except HTTPException:
         raise
