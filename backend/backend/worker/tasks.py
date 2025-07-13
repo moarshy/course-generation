@@ -163,7 +163,7 @@ def load_stage1_data(course_id: str) -> Optional[dict]:
         db.close()
 
 def save_stage2_data(course_id: str, stage2_result):
-    """Save Stage 2 analyzed documents to database"""
+    """Save Stage 2 analyzed documents to database with improved transaction handling"""
     db = get_db_session()
     try:
         # Clear existing analyzed documents
@@ -172,12 +172,30 @@ def save_stage2_data(course_id: str, stage2_result):
         # Save analyzed documents - stage2_result is a dictionary, not an object
         if 'document_analyses' in stage2_result:
             for doc_analysis in stage2_result['document_analyses']:
+                # Robust data validation with defaults
+                doc_type = doc_analysis.get('doc_type')
+                if doc_type is None or doc_type == '' or doc_type == 'None':
+                    doc_type = 'guide'  # Default fallback
+                    logger.warning(f"Document {doc_analysis.get('file_path', 'unknown')} had invalid doc_type, setting to 'guide'")
+                
+                complexity_level = doc_analysis.get('complexity_level')
+                if complexity_level is None or complexity_level == '' or complexity_level == 'None':
+                    complexity_level = 'intermediate'  # Default fallback
+                    logger.warning(f"Document {doc_analysis.get('file_path', 'unknown')} had invalid complexity_level, setting to 'intermediate'")
+                
+                title = doc_analysis.get('title')
+                if title is None or title == '' or title == 'None':
+                    # Extract filename as fallback title
+                    file_path = doc_analysis.get('file_path', '')
+                    title = Path(file_path).stem if file_path else 'Untitled Document'
+                    logger.warning(f"Document {file_path} had invalid title, setting to '{title}'")
+                
                 analyzed_doc = AnalyzedDocument(
                     course_id=course_id,
                     file_path=doc_analysis.get('file_path', ''),
-                    title=doc_analysis.get('title', ''),
-                    doc_type=doc_analysis.get('doc_type', ''),
-                    complexity_level=doc_analysis.get('complexity_level', ''),
+                    title=title,
+                    doc_type=doc_type,
+                    complexity_level=complexity_level,
                     key_concepts=json.dumps(doc_analysis.get('key_concepts', [])),
                     learning_objectives=json.dumps(doc_analysis.get('learning_objectives', [])),
                     summary=doc_analysis.get('semantic_summary', ''),
@@ -191,14 +209,17 @@ def save_stage2_data(course_id: str, stage2_result):
                 )
                 db.add(analyzed_doc)
         
-        # Update course status
+        # Commit all documents first
+        db.commit()
+        logger.info(f"Saved {len(stage2_result.get('document_analyses', []))} analyzed documents to database for course {course_id}")
+        
+        # Update course status in a separate transaction to ensure documents are fully committed
         course = db.query(Course).filter(Course.course_id == course_id).first()
         if course:
             course.status = 'stage2_complete'
             course.updated_at = datetime.utcnow()
-        
-        db.commit()
-        logger.info(f"Saved Stage 2 data to database for course {course_id}")
+            db.commit()
+            logger.info(f"Updated course {course_id} status to stage2_complete")
         
     except Exception as e:
         db.rollback()
@@ -213,26 +234,55 @@ def load_stage2_data(course_id: str):
     try:
         analyzed_docs = db.query(AnalyzedDocument).filter(AnalyzedDocument.course_id == course_id).all()
         
+        if not analyzed_docs:
+            logger.error(f"No analyzed documents found for course {course_id}")
+            return None
+        
         # Convert to document analyses list for agents
         document_analyses = []
         for doc in analyzed_docs:
-            doc_analysis = DocumentAnalysis(
-                file_path=doc.file_path,
-                title=doc.title,
-                doc_type=doc.doc_type,
-                complexity_level=doc.complexity_level or 'intermediate',
-                key_concepts=json.loads(doc.key_concepts) if doc.key_concepts else [],
-                learning_objectives=json.loads(doc.learning_objectives) if doc.learning_objectives else [],
-                semantic_summary=doc.summary or '',
-                prerequisites=json.loads(doc.prerequisites) if doc.prerequisites else [],
-                related_topics=json.loads(doc.related_topics) if doc.related_topics else [],
-                headings=json.loads(doc.headings) if doc.headings else [],
-                code_languages=json.loads(doc.code_languages) if doc.code_languages else [],
-                frontmatter=json.loads(doc.frontmatter) if doc.frontmatter else {},
-                word_count=doc.word_count or 0,
-                metadata=json.loads(doc.doc_metadata) if doc.doc_metadata else {}
-            )
-            document_analyses.append(doc_analysis)
+            # Robust data validation with defaults during loading
+            doc_type = doc.doc_type
+            if doc_type is None or doc_type == '' or doc_type == 'None':
+                doc_type = 'guide'  # Default fallback
+                logger.warning(f"Document {doc.file_path} had invalid doc_type in database, using 'guide'")
+            
+            complexity_level = doc.complexity_level
+            if complexity_level is None or complexity_level == '' or complexity_level == 'None':
+                complexity_level = 'intermediate'  # Default fallback
+                logger.warning(f"Document {doc.file_path} had invalid complexity_level in database, using 'intermediate'")
+            
+            title = doc.title
+            if title is None or title == '' or title == 'None':
+                title = Path(doc.file_path).stem if doc.file_path else 'Untitled Document'
+                logger.warning(f"Document {doc.file_path} had invalid title in database, using '{title}'")
+            
+            try:
+                doc_analysis = DocumentAnalysis(
+                    file_path=doc.file_path or '',
+                    title=title,
+                    doc_type=doc_type,
+                    complexity_level=complexity_level,
+                    key_concepts=json.loads(doc.key_concepts) if doc.key_concepts else [],
+                    learning_objectives=json.loads(doc.learning_objectives) if doc.learning_objectives else [],
+                    semantic_summary=doc.summary or '',
+                    prerequisites=json.loads(doc.prerequisites) if doc.prerequisites else [],
+                    related_topics=json.loads(doc.related_topics) if doc.related_topics else [],
+                    headings=json.loads(doc.headings) if doc.headings else [],
+                    code_languages=json.loads(doc.code_languages) if doc.code_languages else [],
+                    frontmatter=json.loads(doc.frontmatter) if doc.frontmatter else {},
+                    word_count=doc.word_count or 0,
+                    metadata=json.loads(doc.doc_metadata) if doc.doc_metadata else {}
+                )
+                document_analyses.append(doc_analysis)
+            except Exception as e:
+                logger.error(f"Failed to create DocumentAnalysis for {doc.file_path}: {e}")
+                # Skip this document but continue with others
+                continue
+        
+        if not document_analyses:
+            logger.error(f"Failed to load any valid documents for course {course_id}")
+            return None
         
         return Stage2Result(
             document_analyses=document_analyses,

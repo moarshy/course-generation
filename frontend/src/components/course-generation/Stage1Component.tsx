@@ -50,6 +50,7 @@ export default function Stage1Component({
   const [error, setError] = useState<string | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
+  const [isStage2Complete, setIsStage2Complete] = useState(false);
 
   const {
     register,
@@ -75,6 +76,11 @@ export default function Stage1Component({
         if (status?.stage_statuses?.CLONE_REPO === 'completed') {
           setIsComplete(true);
           setHasStarted(true);
+          
+          // Check if Stage 2 is also complete
+          if (status?.stage_statuses?.DOCUMENT_ANALYSIS === 'completed') {
+            setIsStage2Complete(true);
+          }
           
           // Load Stage 1 results
           const [stage1Result, stage1Selections] = await Promise.all([
@@ -131,6 +137,11 @@ export default function Stage1Component({
       try {
         const status = await getGenerationStatus(courseId);
         onStatusUpdate(status);
+
+        // Check if Stage 2 is complete
+        if (status.stage_statuses.DOCUMENT_ANALYSIS === 'completed') {
+          setIsStage2Complete(true);
+        }
 
         if (status.stage_statuses.CLONE_REPO === 'completed') {
           setIsComplete(true);
@@ -452,10 +463,10 @@ export default function Stage1Component({
             )}
 
             {/* Save Selections Button */}
-            <div className="flex justify-end">
+            <div className="flex flex-col items-end">
               <button
                 onClick={handleSaveSelections}
-                disabled={loading || (selections.include_folders?.length || 0) === 0 || isComplete}
+                disabled={loading || (selections.include_folders?.length || 0) === 0 || isStage2Complete}
                 className="flex items-center space-x-2 px-6 py-3 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {loading ? (
@@ -470,6 +481,17 @@ export default function Stage1Component({
                   </>
                 )}
               </button>
+              
+              {/* Status message */}
+              <div className="mt-2 text-sm">
+                {isStage2Complete ? (
+                  <span className="text-green-600">✓ Stage 2 already completed</span>
+                ) : (selections.include_folders?.length || 0) === 0 ? (
+                  <span className="text-amber-600">⚠️ Please select at least one folder</span>
+                ) : (
+                  <span className="text-blue-600">Ready to continue to Stage 2</span>
+                )}
+              </div>
             </div>
           </div>
         </div>

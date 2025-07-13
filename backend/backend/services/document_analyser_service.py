@@ -8,6 +8,7 @@ Responsibility: AI-powered document analysis
 """
 
 import logging
+import time
 from typing import List, Dict, Any, Optional
 
 from backend.shared.database import (
@@ -136,49 +137,67 @@ class DocumentAnalyserService(BaseService):
         return super().get_task_status(course_id, 'stage2')
     
     def update_document_metadata(self, course_id: str, document_id: str, metadata_updates: Dict[str, Any]) -> Dict[str, Any]:
-        """Update document metadata in database"""
-        try:
-            db = get_db_session()
+        """Update document metadata in database with retry mechanism for race condition"""
+        max_retries = 3
+        retry_delay = 0.5  # 500ms between retries
+        
+        for attempt in range(max_retries):
             try:
-                # Find the document
-                doc = db.query(AnalyzedDocument).filter(
-                    AnalyzedDocument.course_id == course_id,
-                    AnalyzedDocument.id == document_id
-                ).first()
-                
-                if not doc:
-                    return {"error": f"Document {document_id} not found for course {course_id}"}
-                
-                # Update metadata fields
-                import json
-                
-                if 'doc_type' in metadata_updates:
-                    doc.doc_type = metadata_updates['doc_type']
-                
-                if 'semantic_summary' in metadata_updates:
-                    doc.summary = metadata_updates['semantic_summary']
-                
-                if 'key_concepts' in metadata_updates:
-                    doc.key_concepts = json.dumps(metadata_updates['key_concepts'])
-                
-                if 'learning_objectives' in metadata_updates:
-                    doc.learning_objectives = json.dumps(metadata_updates['learning_objectives'])
-                
-                # Update the timestamp
-                from datetime import datetime, timezone
-                doc.updated_at = datetime.now(timezone.utc)
-                
-                db.commit()
-                
-                logger.info(f"Successfully updated document metadata for document {document_id} in course {course_id}")
-                return {"message": "Document metadata updated successfully"}
-                
+                db = get_db_session()
+                try:
+                    # Find the document
+                    doc = db.query(AnalyzedDocument).filter(
+                        AnalyzedDocument.course_id == course_id,
+                        AnalyzedDocument.id == document_id
+                    ).first()
+                    
+                    if not doc:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Document {document_id} not found for course {course_id}, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            logger.error(f"Document {document_id} not found for course {course_id} after {max_retries} attempts")
+                            return {"error": f"Document {document_id} not found for course {course_id}"}
+                    
+                    # Update metadata fields
+                    import json
+                    
+                    if 'doc_type' in metadata_updates:
+                        doc.doc_type = metadata_updates['doc_type']
+                    
+                    if 'semantic_summary' in metadata_updates:
+                        doc.summary = metadata_updates['semantic_summary']
+                    
+                    if 'key_concepts' in metadata_updates:
+                        doc.key_concepts = json.dumps(metadata_updates['key_concepts'])
+                    
+                    if 'learning_objectives' in metadata_updates:
+                        doc.learning_objectives = json.dumps(metadata_updates['learning_objectives'])
+                    
+                    # Update the timestamp
+                    from datetime import datetime, timezone
+                    doc.updated_at = datetime.now(timezone.utc)
+                    
+                    db.commit()
+                    
+                    logger.info(f"Successfully updated document metadata for document {document_id} in course {course_id}")
+                    return {"message": "Document metadata updated successfully"}
+                    
+                except Exception as e:
+                    db.rollback()
+                    raise e
+                finally:
+                    db.close()
+                    
             except Exception as e:
-                db.rollback()
-                raise e
-            finally:
-                db.close()
-                
-        except Exception as e:
-            logger.error(f"Failed to update document metadata: {e}")
-            return {"error": str(e)} 
+                if attempt < max_retries - 1:
+                    logger.warning(f"Failed to update document metadata (attempt {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"Failed to update document metadata after {max_retries} attempts: {e}")
+                    return {"error": str(e)}
+        
+        # Should not reach here, but just in case
+        return {"error": "Maximum retries exceeded"} 

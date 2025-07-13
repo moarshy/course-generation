@@ -357,24 +357,40 @@ class DocumentAnalyzer(dspy.Module):
         # Concept extraction
         concepts = self._extract_concepts(content, classification['doc_type'].value, title)
         
-        # Semantic analysis
-        semantics = self._analyze_semantics(content, concepts['key_concepts'], classification['doc_type'].value)
+        # Validate and provide defaults for critical fields
+        doc_type = classification.get('doc_type')
+        if doc_type is None:
+            doc_type = DocumentType.GUIDE  # Default fallback
+            logger.warning(f"Document {file_path} had invalid doc_type from AI, using GUIDE")
         
-        # Create DocumentAnalysis object
+        complexity_level = classification.get('complexity_level')
+        if complexity_level is None:
+            complexity_level = ComplexityLevel.INTERMEDIATE  # Default fallback
+            logger.warning(f"Document {file_path} had invalid complexity_level from AI, using INTERMEDIATE")
+        
+        # Validate title
+        if title is None or title.strip() == '' or title == 'None':
+            title = Path(file_path).stem or 'Untitled Document'
+            logger.warning(f"Document {file_path} had invalid title, using filename: '{title}'")
+        
+        # Semantic analysis
+        semantics = self._analyze_semantics(content, concepts['key_concepts'], doc_type.value if hasattr(doc_type, 'value') else str(doc_type))
+        
+        # Create DocumentAnalysis object with validated data
         return DocumentAnalysis(
             file_path=file_path,
             title=title,
-            doc_type=classification['doc_type'],
-            complexity_level=classification['complexity_level'],
-            key_concepts=concepts['key_concepts'],
-            learning_objectives=concepts['learning_objectives'],
-            semantic_summary=semantics['semantic_summary'],
-            prerequisites=semantics['prerequisites'],
-            related_topics=semantics['related_topics'],
-            headings=headings,
-            code_languages=code_languages,
-            frontmatter=basic_data['frontmatter'],
-            word_count=len(content.split()),
+            doc_type=doc_type,
+            complexity_level=complexity_level,
+            key_concepts=concepts['key_concepts'] or [],
+            learning_objectives=concepts['learning_objectives'] or [],
+            semantic_summary=semantics['semantic_summary'] or '',
+            prerequisites=semantics['prerequisites'] or [],
+            related_topics=semantics['related_topics'] or [],
+            headings=headings or [],
+            code_languages=code_languages or [],
+            frontmatter=basic_data['frontmatter'] or {},
+            word_count=len(content.split()) if content else 0,
             metadata={
                 'processing_time': time.time() - start_time,
                 'stage': 'stage2',

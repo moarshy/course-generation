@@ -78,7 +78,8 @@ class LearningPathwayService(BaseService):
                         "description": module.description,
                         "sequence_order": module.sequence_order,
                         "learning_objectives": json.loads(module.learning_objectives) if module.learning_objectives else [],
-                        "estimated_time": module.estimated_time
+                        "estimated_time": module.estimated_time,
+                        "theme": "General"  # Add theme field that frontend expects
                     })
                 
                 pathway_list.append({
@@ -86,7 +87,8 @@ class LearningPathwayService(BaseService):
                     "index": i,
                     "title": pathway.title,
                     "description": pathway.description,
-                    "complexity_level": pathway.complexity_level,
+                    "complexity_level": pathway.complexity_level,  # Keep original field
+                    "complexity": pathway.complexity_level,  # Add mapped field for frontend
                     "estimated_duration": pathway.estimated_duration,
                     "prerequisites": pathway.prerequisites,
                     "module_count": len(module_list),
