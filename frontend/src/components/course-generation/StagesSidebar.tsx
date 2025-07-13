@@ -126,6 +126,19 @@ export default function StagesSidebar({ currentStage, generationStatus, onStageC
     }
   };
 
+  const calculateProgress = () => {
+    if (!generationStatus) return 0;
+    
+    let completedStages = 0;
+    stages.forEach(stage => {
+      if (getStageStatus(stage) === 'completed') {
+        completedStages++;
+      }
+    });
+    
+    return (completedStages / stages.length) * 100;
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border p-6">
       <div className="mb-6">
@@ -197,12 +210,12 @@ export default function StagesSidebar({ currentStage, generationStatus, onStageC
             <div 
               className="bg-blue-600 h-2 rounded-full transition-all duration-300"
               style={{ 
-                width: `${generationStatus.progress}%` 
+                width: `${calculateProgress()}%` 
               }}
             ></div>
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            {generationStatus.progress}% complete
+            {calculateProgress()}% complete
           </div>
         </div>
       )}
