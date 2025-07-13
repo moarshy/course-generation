@@ -1,13 +1,16 @@
 """
 Stage 4: Course Generator Agent
-Multi-agent course content generation with debate system
+Multi-agent course content generation with debate system and parallel processing
 """
 
 import json
 import logging
 import time
+import asyncio
+import concurrent.futures
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
+from dataclasses import dataclass
 
 import dspy
 import redis
@@ -80,7 +83,261 @@ class Stage4Result(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 # =============================================================================
-# Configuration
+# Enhanced Progress Tracking with Module-Level Detail
+# =============================================================================
+
+@dataclass
+class ModuleProgress:
+    """Progress tracking for individual modules"""
+    module_id: str
+    title: str
+    status: str  # 'pending', 'processing', 'debating', 'completed', 'failed'
+    current_round: int = 0
+    total_rounds: int = 0
+    debate_history: List[Dict[str, Any]] = None
+    start_time: Optional[float] = None
+    completion_time: Optional[float] = None
+    error_message: Optional[str] = None
+    word_count: int = 0
+    
+    def __post_init__(self):
+        if self.debate_history is None:
+            self.debate_history = []
+
+class S4ProgressTracker:
+    """Enhanced Stage 4 progress tracker with detailed module tracking"""
+    
+    def __init__(self, redis_client: redis.Redis, course_id: str):
+        self.redis = redis_client
+        self.course_id = course_id
+        self.progress_key = f"stage4_progress:{course_id}"
+        self.modules_progress: Dict[str, ModuleProgress] = {}
+        self.total_modules = 0
+        self.completed_modules = 0
+        self.failed_modules = 0
+        self.start_time = time.time()
+        
+    def initialize_detailed_progress(self, modules: List[LearningModule]):
+        """Initialize detailed progress tracking for all modules"""
+        self.total_modules = len(modules)
+        self.modules_progress = {}
+        
+        # Initialize each module's progress
+        for module in modules:
+            self.modules_progress[module.module_id] = ModuleProgress(
+                module_id=module.module_id,
+                title=module.title,
+                status='pending'
+            )
+        
+        # Save initial state to Redis
+        self._save_to_redis()
+        logger.info(f"Initialized Stage 4 progress tracking for {self.total_modules} modules")
+    
+    def start_module_processing(self, module_id: str):
+        """Mark a module as starting processing"""
+        if module_id in self.modules_progress:
+            module_progress = self.modules_progress[module_id]
+            module_progress.status = 'processing'
+            module_progress.start_time = time.time()
+            self._save_to_redis()
+            logger.info(f"Started processing module: {module_progress.title}")
+    
+    def update_module_debate_round(self, module_id: str, round_num: int, total_rounds: int, activity: str):
+        """Update module debate round progress"""
+        if module_id in self.modules_progress:
+            module_progress = self.modules_progress[module_id]
+            module_progress.status = 'debating'
+            module_progress.current_round = round_num
+            module_progress.total_rounds = total_rounds
+            
+            # Add debate round to history
+            debate_entry = {
+                'round': round_num,
+                'activity': activity,
+                'timestamp': time.time()
+            }
+            module_progress.debate_history.append(debate_entry)
+            
+            self._save_to_redis()
+            logger.info(f"Module {module_progress.title}: Round {round_num}/{total_rounds} - {activity}")
+    
+    def complete_module(self, module_id: str, word_count: int = 0):
+        """Mark a module as completed"""
+        if module_id in self.modules_progress:
+            module_progress = self.modules_progress[module_id]
+            module_progress.status = 'completed'
+            module_progress.completion_time = time.time()
+            module_progress.word_count = word_count
+            self.completed_modules += 1
+            self._save_to_redis()
+            logger.info(f"Completed module: {module_progress.title} ({word_count} words)")
+    
+    def fail_module(self, module_id: str, error_message: str):
+        """Mark a module as failed"""
+        if module_id in self.modules_progress:
+            module_progress = self.modules_progress[module_id]
+            module_progress.status = 'failed'
+            module_progress.error_message = error_message
+            module_progress.completion_time = time.time()
+            self.failed_modules += 1
+            self._save_to_redis()
+            logger.error(f"Failed module: {module_progress.title} - {error_message}")
+    
+    def get_overall_progress(self) -> Dict[str, Any]:
+        """Get overall progress summary"""
+        elapsed_time = time.time() - self.start_time
+        processing_modules = len([m for m in self.modules_progress.values() if m.status in ['processing', 'debating']])
+        
+        return {
+            'total_modules': self.total_modules,
+            'completed_modules': self.completed_modules,
+            'failed_modules': self.failed_modules,
+            'processing_modules': processing_modules,
+            'pending_modules': self.total_modules - self.completed_modules - self.failed_modules - processing_modules,
+            'progress_percentage': int((self.completed_modules / self.total_modules) * 100) if self.total_modules > 0 else 0,
+            'elapsed_time': elapsed_time,
+            'estimated_completion': self._estimate_completion_time()
+        }
+    
+    def _estimate_completion_time(self) -> Optional[float]:
+        """Estimate completion time based on current progress"""
+        if self.completed_modules == 0:
+            return None
+        
+        elapsed_time = time.time() - self.start_time
+        avg_time_per_module = elapsed_time / self.completed_modules
+        remaining_modules = self.total_modules - self.completed_modules - self.failed_modules
+        
+        return avg_time_per_module * remaining_modules
+    
+    def _save_to_redis(self):
+        """Save current progress to Redis"""
+        try:
+            progress_data = {
+                'overall': self.get_overall_progress(),
+                'modules': [
+                    {
+                        'module_id': m.module_id,
+                        'title': m.title,
+                        'status': m.status,
+                        'current_round': m.current_round,
+                        'total_rounds': m.total_rounds,
+                        'debate_history': m.debate_history,
+                        'start_time': m.start_time,
+                        'completion_time': m.completion_time,
+                        'error_message': m.error_message,
+                        'word_count': m.word_count
+                    }
+                    for m in self.modules_progress.values()
+                ],
+                'timestamp': time.time()
+            }
+            
+            self.redis.setex(
+                self.progress_key,
+                3600,  # 1 hour TTL
+                json.dumps(progress_data)
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to save Stage 4 progress to Redis: {e}")
+    
+    def finalize_progress(self):
+        """Finalize progress tracking"""
+        overall = self.get_overall_progress()
+        logger.info(f"Stage 4 completed: {overall['completed_modules']}/{overall['total_modules']} modules generated, {overall['failed_modules']} failed")
+        self._save_to_redis()
+
+# =============================================================================
+# Parallel Module Processing
+# =============================================================================
+
+class ParallelModuleProcessor:
+    """Handles parallel processing of modules with controlled concurrency"""
+    
+    def __init__(self, max_workers: int = 3):
+        self.max_workers = max_workers
+        self.generator = DebateModuleContentGenerator()
+    
+    def process_module_batch(self, modules: List[LearningModule], document_analyses: List[DocumentAnalysis], 
+                           target_complexity: ComplexityLevel, overview_context: str, 
+                           additional_instructions: str, progress_tracker: S4ProgressTracker) -> List[Tuple[Optional[ModuleContent], ModuleDebateHistory]]:
+        """Process a batch of modules in parallel"""
+        results = []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submit all modules for processing
+            future_to_module = {
+                executor.submit(
+                    self._process_single_module,
+                    module,
+                    document_analyses,
+                    target_complexity,
+                    overview_context,
+                    additional_instructions,
+                    progress_tracker
+                ): module for module in modules
+            }
+            
+            # Collect results as they complete
+            for future in concurrent.futures.as_completed(future_to_module):
+                module = future_to_module[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Module {module.title} processing failed: {e}")
+                    # Create failed result
+                    failed_history = ModuleDebateHistory(
+                        module_id=module.module_id,
+                        success=False
+                    )
+                    results.append((None, failed_history))
+                    progress_tracker.fail_module(module.module_id, str(e))
+        
+        return results
+    
+    def _process_single_module(self, module: LearningModule, document_analyses: List[DocumentAnalysis], 
+                             target_complexity: ComplexityLevel, overview_context: str, 
+                             additional_instructions: str, progress_tracker: S4ProgressTracker) -> Tuple[Optional[ModuleContent], ModuleDebateHistory]:
+        """Process a single module with progress tracking"""
+        try:
+            # Start module processing
+            progress_tracker.start_module_processing(module.module_id)
+            
+            # Generate content with debate tracking
+            module_content, debate_history = self.generator.generate_module_content(
+                learning_module=module,
+                document_analyses=document_analyses,
+                target_complexity=target_complexity,
+                overview_context=overview_context,
+                additional_instructions=additional_instructions,
+                progress_tracker=progress_tracker
+            )
+            
+            # Calculate word count
+            word_count = 0
+            if module_content:
+                word_count = len(module_content.main_content.split()) + len(module_content.introduction.split()) + len(module_content.conclusion.split())
+                progress_tracker.complete_module(module.module_id, word_count)
+            else:
+                progress_tracker.fail_module(module.module_id, "Failed to generate content")
+            
+            return module_content, debate_history
+            
+        except Exception as e:
+            logger.error(f"Error processing module {module.title}: {e}")
+            progress_tracker.fail_module(module.module_id, str(e))
+            failed_history = ModuleDebateHistory(
+                module_id=module.module_id,
+                success=False
+            )
+            return None, failed_history
+
+# =============================================================================
+# Configuration and Helper Functions
 # =============================================================================
 
 class S4Config:
@@ -88,10 +345,7 @@ class S4Config:
     MAX_DEBATES = settings.MAX_DEBATES
     MAX_CONTENT_WORDS = settings.MAX_CONTENT_WORDS
     MAX_OVERVIEW_WORDS = settings.MAX_OVERVIEW_WORDS
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
+    MAX_PARALLEL_WORKERS = 3  # Configurable parallel processing limit
 
 def prepare_source_documents_content(learning_module: LearningModule, 
                                    document_analyses: List[DocumentAnalysis], 
@@ -268,7 +522,8 @@ class DebateModuleContentGenerator(dspy.Module):
                               document_analyses: List[DocumentAnalysis],
                               target_complexity: ComplexityLevel,
                               overview_context: str = "",
-                              additional_instructions: str = "") -> Tuple[Optional[ModuleContent], ModuleDebateHistory]:
+                              additional_instructions: str = "",
+                              progress_tracker: S4ProgressTracker = None) -> Tuple[Optional[ModuleContent], ModuleDebateHistory]:
         """Generate complete module content through iterative debate process"""
         
         logger.info(f"🎭 Starting module content generation for: {learning_module.title}")
@@ -296,6 +551,15 @@ class DebateModuleContentGenerator(dspy.Module):
         for round_num in range(1, S4Config.MAX_DEBATES + 1):
             logger.info(f"🔄 Module Content Debate Round {round_num}")
             
+            # Update progress tracker
+            if progress_tracker:
+                progress_tracker.update_module_debate_round(
+                    learning_module.module_id, 
+                    round_num, 
+                    S4Config.MAX_DEBATES,
+                    f"💡 Proposer creating content"
+                )
+            
             debate_round = ModuleDebateRound(round_number=round_num)
             
             # Proposer creates/refines module content
@@ -320,6 +584,15 @@ class DebateModuleContentGenerator(dspy.Module):
             debate_round.proposal = current_proposal
             debate_round.proposal_reasoning = reasoning
             
+            # Update progress tracker for critic phase
+            if progress_tracker:
+                progress_tracker.update_module_debate_round(
+                    learning_module.module_id,
+                    round_num,
+                    S4Config.MAX_DEBATES,
+                    f"🔍 Critic evaluating content"
+                )
+            
             # Critic evaluates the content
             current_critique, severity = self._run_critique_round(
                 round_num, instructions, learning_module_str, current_proposal,
@@ -331,9 +604,29 @@ class DebateModuleContentGenerator(dspy.Module):
             
             history.rounds.append(debate_round)
             
+            # Update progress tracker for round completion
+            if progress_tracker:
+                activity = f"✅ Round {round_num} completed - {severity}"
+                progress_tracker.update_module_debate_round(
+                    learning_module.module_id,
+                    round_num,
+                    S4Config.MAX_DEBATES,
+                    activity
+                )
+            
             # If acceptable, stop iterating
             if severity == "acceptable":
                 logger.info("✅ Module content accepted by critic")
+                
+                # Update progress tracker for acceptance
+                if progress_tracker:
+                    progress_tracker.update_module_debate_round(
+                        learning_module.module_id,
+                        round_num,
+                        S4Config.MAX_DEBATES,
+                        f"🎉 Content accepted!"
+                    )
+                
                 history.final_content = current_proposal
                 history.success = True
                 return current_proposal, history
@@ -346,42 +639,13 @@ class DebateModuleContentGenerator(dspy.Module):
         return current_proposal, history
 
 # =============================================================================
-# Progress Tracker
-# =============================================================================
-
-class S4ProgressTracker:
-    """Tracks and updates Stage 4 progress"""
-    
-    def __init__(self, redis_client: redis.Redis, task_id: str):
-        self.redis = redis_client
-        self.task_id = task_id
-        self.progress_key = f"task:{task_id}:progress"
-    
-    def update_progress(self, stage: str, progress: int, message: str = ""):
-        """Update progress in Redis"""
-        try:
-            progress_data = {
-                'stage': stage,
-                'progress': progress,
-                'message': message,
-                'timestamp': str(int(time.time()))
-            }
-            
-            self.redis.hset(self.progress_key, mapping=progress_data)
-            self.redis.expire(self.progress_key, 3600)  # Expire after 1 hour
-            
-            logger.info(f"Stage 4 Progress: {progress}% - {message}")
-        except Exception as e:
-            logger.error(f"Failed to update progress: {e}")
-
-# =============================================================================
 # Main Stage 4 Processor
 # =============================================================================
 
 def process_stage4(stage3_result: Stage3Result, additional_instructions: str = "",
                   task_id: str = None, redis_client: redis.Redis = None) -> Stage4Result:
     """
-    Process Stage 4: Course content generation
+    Process Stage 4: Course content generation with parallel processing
     
     Args:
         stage3_result: Result from Stage 3 with learning paths
@@ -394,49 +658,53 @@ def process_stage4(stage3_result: Stage3Result, additional_instructions: str = "
     """
     start_time = time.time()
     
-    # Initialize progress tracker
+    # Extract course_id from task_id or use a default
+    course_id = task_id if task_id else f"stage4_{int(time.time())}"
+    
+    # Initialize enhanced progress tracker
     progress_tracker = None
-    if task_id and redis_client:
-        progress_tracker = S4ProgressTracker(redis_client, task_id)
-        progress_tracker.update_progress("stage4", 0, "Starting course content generation")
+    if redis_client:
+        progress_tracker = S4ProgressTracker(redis_client, course_id)
     
     try:
-        # Initialize content generator
-        generator = DebateModuleContentGenerator()
+        # Collect all modules from all learning paths
+        all_modules = []
+        for learning_path in stage3_result.learning_paths:
+            all_modules.extend(learning_path.modules)
         
+        total_modules = len(all_modules)
+        logger.info(f"Processing {total_modules} modules with parallel processing")
+        
+        # Initialize detailed progress tracking
         if progress_tracker:
-            progress_tracker.update_progress("stage4", 5, "Initializing content generator")
+            progress_tracker.initialize_detailed_progress(all_modules)
         
-        # Generate content for all modules in all learning paths
+        # Initialize parallel processor
+        parallel_processor = ParallelModuleProcessor(max_workers=S4Config.MAX_PARALLEL_WORKERS)
+        
+        # Process modules in parallel
+        logger.info(f"Starting parallel processing with {S4Config.MAX_PARALLEL_WORKERS} workers")
+        results = parallel_processor.process_module_batch(
+            modules=all_modules,
+            document_analyses=stage3_result.stage2_result.document_analyses,
+            target_complexity=stage3_result.target_complexity,
+            overview_context=getattr(stage3_result.stage2_result, 'overview_context', ''),
+            additional_instructions=additional_instructions,
+            progress_tracker=progress_tracker
+        )
+        
+        # Collect results
         generated_content = []
         debate_histories = []
         
-        total_modules = sum(len(path.modules) for path in stage3_result.learning_paths)
-        processed_modules = 0
+        for module_content, debate_history in results:
+            if module_content:
+                generated_content.append(module_content)
+            debate_histories.append(debate_history)
         
-        for learning_path in stage3_result.learning_paths:
-            for module in learning_path.modules:
-                logger.info(f"Generating content for module: {module.title}")
-                
-                # Generate content for this module
-                module_content, debate_history = generator.generate_module_content(
-                    learning_module=module,
-                    document_analyses=stage3_result.stage2_result.document_analyses,
-                    target_complexity=stage3_result.target_complexity,
-                    overview_context=getattr(stage3_result.stage2_result, 'overview_context', ''),
-                    additional_instructions=additional_instructions
-                )
-                
-                if module_content:
-                    generated_content.append(module_content)
-                
-                debate_histories.append(debate_history)
-                processed_modules += 1
-                
-                # Update progress
-                if progress_tracker:
-                    progress_percent = 5 + int((processed_modules / total_modules) * 85)
-                    progress_tracker.update_progress("stage4", progress_percent, f"Generated content for {processed_modules}/{total_modules} modules")
+        # Finalize progress tracking
+        if progress_tracker:
+            progress_tracker.finalize_progress()
         
         # Create result
         result = Stage4Result(
@@ -444,24 +712,28 @@ def process_stage4(stage3_result: Stage3Result, additional_instructions: str = "
             generated_content=generated_content,
             debate_histories=debate_histories,
             additional_instructions=additional_instructions,
-            total_modules_processed=processed_modules,
+            total_modules_processed=total_modules,
             successful_generations=len(generated_content),
             metadata={
                 'processing_time': time.time() - start_time,
                 'stage': 'stage4',
-                'content_generation_version': '1.0',
-                'total_debate_rounds': sum(len(history.rounds) for history in debate_histories)
+                'content_generation_version': '2.0',
+                'parallel_workers': S4Config.MAX_PARALLEL_WORKERS,
+                'total_debate_rounds': sum(len(history.rounds) for history in debate_histories),
+                'parallel_processing_enabled': True
             }
         )
         
-        if progress_tracker:
-            progress_tracker.update_progress("stage4", 100, f"Stage 4 complete: {len(generated_content)} modules generated")
-        
-        logger.info(f"Stage 4 completed: {len(generated_content)} modules generated with {len(debate_histories)} debate histories")
+        logger.info(f"Stage 4 completed: {len(generated_content)}/{total_modules} modules generated successfully with {len(debate_histories)} debate histories")
         return result
         
     except Exception as e:
         logger.error(f"Stage 4 failed: {e}")
         if progress_tracker:
-            progress_tracker.update_progress("stage4", -1, f"Stage 4 failed: {str(e)}")
+            # Update all remaining modules as failed
+            for module in all_modules:
+                if module.module_id in progress_tracker.modules_progress:
+                    module_progress = progress_tracker.modules_progress[module.module_id]
+                    if module_progress.status in ['pending', 'processing', 'debating']:
+                        progress_tracker.fail_module(module.module_id, f"Stage 4 failed: {str(e)}")
         raise e 

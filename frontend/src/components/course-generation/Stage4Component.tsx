@@ -4,14 +4,15 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Course, GenerationStatus, Stage4Response, Stage4Input, Stage3Response } from '@/lib/types';
+import { Course, GenerationStatus, Stage4Response, Stage4Input, Stage3Response, Stage4Progress, ModuleProgressDetail } from '@/lib/types';
 import { 
   startStage4, 
   getGenerationStatus, 
   getStage4Result,
   getStage3Result,
   getCourseContent,
-  downloadCourse
+  downloadCourse,
+  getStage4Progress
 } from '@/lib/api';
 import { 
   BookOpen, 
@@ -57,6 +58,7 @@ export default function Stage4Component({
   const [isStarting, setIsStarting] = useState(false);
   const [courseContent, setCourseContent] = useState<any>(null);
   const [stage3Data, setStage3Data] = useState<Stage3Response | null>(null);
+  const [stage4Progress, setStage4Progress] = useState<Stage4Progress | null>(null);
 
   const {
     register,
@@ -226,15 +228,24 @@ export default function Stage4Component({
     }
   };
 
-  // Poll for stage completion
+  // Poll for stage completion with detailed progress
   const pollForStageCompletion = async () => {
     const maxAttempts = 240; // 20 minutes with 5-second intervals
     let attempts = 0;
 
     const poll = async () => {
       try {
-        const status = await getGenerationStatus(courseId);
+        const [status, detailedProgress] = await Promise.all([
+          getGenerationStatus(courseId),
+          getStage4Progress(courseId).catch(() => null)
+        ]);
+        
         onStatusUpdate(status);
+        
+        // Update detailed progress if available
+        if (detailedProgress) {
+          setStage4Progress(detailedProgress);
+        }
 
         if (status.stage_statuses.COURSE_GENERATION === 'completed') {
           setIsComplete(true);
@@ -304,6 +315,110 @@ export default function Stage4Component({
       default:
         return 'Standard complexity level';
     }
+  };
+
+  const getModuleStatusIcon = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return <CheckCircle className="w-5 h-5 text-green-600" />;
+      case 'failed':
+        return <AlertCircle className="w-5 h-5 text-red-600" />;
+      case 'processing':
+        return <Clock className="w-5 h-5 text-blue-600 animate-pulse" />;
+      case 'debating':
+        return <Zap className="w-5 h-5 text-yellow-600 animate-pulse" />;
+      default:
+        return <Clock className="w-5 h-5 text-gray-400" />;
+    }
+  };
+
+  const getModuleStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed':
+        return 'bg-green-50 border-green-200';
+      case 'failed':
+        return 'bg-red-50 border-red-200';
+      case 'processing':
+        return 'bg-blue-50 border-blue-200';
+      case 'debating':
+        return 'bg-yellow-50 border-yellow-200';
+      default:
+        return 'bg-gray-50 border-gray-200';
+    }
+  };
+
+  const formatElapsedTime = (seconds: number): string => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    
+    if (minutes > 0) {
+      return `${minutes}m ${remainingSeconds}s`;
+    }
+    return `${remainingSeconds}s`;
+  };
+
+  const renderModuleProgress = (moduleProgress: ModuleProgressDetail) => {
+    const isDebating = moduleProgress.status === 'debating';
+    const currentActivity = moduleProgress.debate_history.length > 0 
+      ? moduleProgress.debate_history[moduleProgress.debate_history.length - 1]?.activity 
+      : '';
+
+    return (
+      <div key={moduleProgress.module_id} className={`border rounded-lg p-4 ${getModuleStatusColor(moduleProgress.status)}`}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-3">
+            {getModuleStatusIcon(moduleProgress.status)}
+            <div>
+              <h4 className="font-semibold text-sm">{moduleProgress.title}</h4>
+              <p className="text-xs text-gray-600">
+                {moduleProgress.status === 'completed' && moduleProgress.word_count > 0
+                  ? `${moduleProgress.word_count} words generated`
+                  : moduleProgress.status === 'failed'
+                  ? 'Generation failed'
+                  : 'Processing...'
+                }
+              </p>
+            </div>
+          </div>
+          
+          {isDebating && (
+            <div className="text-right">
+              <div className="text-xs font-medium text-yellow-700">
+                Round {moduleProgress.current_round}/{moduleProgress.total_rounds}
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Current Activity */}
+        {currentActivity && (
+          <div className="mb-2">
+            <p className="text-xs text-gray-600 bg-white rounded px-2 py-1">
+              {currentActivity}
+            </p>
+          </div>
+        )}
+        
+        {/* Debate Progress Bar */}
+        {isDebating && moduleProgress.total_rounds > 0 && (
+          <div className="mb-2">
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div 
+                className="bg-yellow-600 h-2 rounded-full transition-all duration-300"
+                style={{ width: `${(moduleProgress.current_round / moduleProgress.total_rounds) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+        
+        {/* Error Message */}
+        {moduleProgress.status === 'failed' && moduleProgress.error_message && (
+          <div className="mt-2 text-xs text-red-600 bg-red-100 rounded px-2 py-1">
+            {moduleProgress.error_message}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -436,21 +551,23 @@ export default function Stage4Component({
         </div>
       )}
 
-      {/* Status Display */}
+      {/* Enhanced Status Display with Module Progress */}
       {hasStarted && !isComplete && (
         <div className="mb-8">
           <div className={`border rounded-xl p-6 ${
             pollingStatus ? 'bg-blue-50 border-blue-200' : 
             'bg-red-50 border-red-200'
           }`}>
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-3 mb-6">
               {pollingStatus ? (
                 <>
-                  <Clock className="w-6 h-6 text-blue-600 animate-pulse" />
+                  <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                    <Layers className="w-6 h-6 text-blue-600 animate-pulse" />
+                  </div>
                   <div>
-                    <h3 className="text-lg font-semibold text-blue-900">Generating Course Content</h3>
+                    <h3 className="text-lg font-semibold text-blue-900">🎭 AI Course Generation System</h3>
                     <p className="text-blue-700">
-                      AI is creating comprehensive course materials including markdown content for each module...
+                      Generating comprehensive course materials with AI debate system...
                     </p>
                   </div>
                 </>
@@ -464,6 +581,75 @@ export default function Stage4Component({
                 </>
               )}
             </div>
+
+            {/* Detailed Progress Display */}
+            {pollingStatus && stage4Progress?.detailed_progress && (
+              <div className="space-y-4">
+                {/* Overall Progress */}
+                <div className="bg-white rounded-lg p-4 border">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-semibold text-gray-900">Overall Progress</h4>
+                    <span className="text-sm font-medium text-blue-600">
+                      {stage4Progress.detailed_progress.overall.progress_percentage}%
+                    </span>
+                  </div>
+                  
+                  {/* Progress Bar */}
+                  <div className="w-full bg-gray-200 rounded-full h-3 mb-4">
+                    <div 
+                      className="bg-blue-600 h-3 rounded-full transition-all duration-300"
+                      style={{ width: `${stage4Progress.detailed_progress.overall.progress_percentage}%` }}
+                    />
+                  </div>
+                  
+                  {/* Progress Stats */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div className="text-center">
+                      <div className="font-semibold text-green-600">
+                        {stage4Progress.detailed_progress.overall.completed_modules}
+                      </div>
+                      <div className="text-gray-600">Completed</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="font-semibold text-blue-600">
+                        {stage4Progress.detailed_progress.overall.processing_modules}
+                      </div>
+                      <div className="text-gray-600">Processing</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="font-semibold text-gray-600">
+                        {stage4Progress.detailed_progress.overall.pending_modules}
+                      </div>
+                      <div className="text-gray-600">Pending</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="font-semibold text-red-600">
+                        {stage4Progress.detailed_progress.overall.failed_modules}
+                      </div>
+                      <div className="text-gray-600">Failed</div>
+                    </div>
+                  </div>
+                  
+                  {/* Time Information */}
+                  <div className="mt-4 pt-4 border-t flex justify-between text-sm text-gray-600">
+                    <span>Elapsed: {formatElapsedTime(stage4Progress.detailed_progress.overall.elapsed_time)}</span>
+                    {stage4Progress.detailed_progress.overall.estimated_completion && (
+                      <span>
+                        ETA: {formatElapsedTime(stage4Progress.detailed_progress.overall.estimated_completion)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Module Progress Grid */}
+                <div className="bg-white rounded-lg p-4 border">
+                  <h4 className="font-semibold text-gray-900 mb-4">Module Progress</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto">
+                    {stage4Progress.detailed_progress.modules.map(renderModuleProgress)}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

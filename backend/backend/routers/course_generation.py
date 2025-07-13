@@ -17,6 +17,7 @@ from backend.services.learning_pathway_service import LearningPathwayService
 from backend.services.modules_generation_service import ModulesGenerationService
 from backend.services.course_service import CourseService
 from backend.core.security import get_current_user_id
+from backend.core.config import settings
 from backend.shared.database import get_db_session, Pathway, Module
 
 logger = logging.getLogger(__name__)
@@ -1018,9 +1019,25 @@ async def get_stage3_progress(course_id: str = Query(..., description="Course ID
 
 @router.get("/stage4/progress")
 async def get_stage4_progress(course_id: str = Query(..., description="Course ID")):
-    """Get progress for Stage 4 course generation"""
+    """Get detailed progress for Stage 4 course generation with module-level tracking"""
     try:
-        # Use lean service to get task status
+        redis_client = redis.Redis.from_url(settings.REDIS_URL)
+        progress_key = f"stage4_progress:{course_id}"
+        
+        # Try to get detailed progress from Redis first
+        try:
+            progress_data = redis_client.get(progress_key)
+            if progress_data:
+                detailed_progress = json.loads(progress_data)
+                return {
+                    'status': 'in_progress',
+                    'detailed_progress': detailed_progress,
+                    'source': 'redis'
+                }
+        except Exception as e:
+            logger.warning(f"Failed to get detailed Stage 4 progress from Redis: {e}")
+        
+        # Fall back to database task status
         task_status = modules_service.get_task_status(course_id)
         
         if task_status['status'] == 'not_started':
@@ -1029,14 +1046,15 @@ async def get_stage4_progress(course_id: str = Query(..., description="Course ID
                 detail="Stage 4 task not found"
             )
         
-        # Return simplified progress info from database
+        # Return basic progress info from database
         return {
             'status': task_status['status'],
             'progress': task_status['progress'],
             'current_step': task_status.get('current_step', ''),
             'error': task_status.get('error_message'),
             'started_at': task_status.get('started_at'),
-            'completed_at': task_status.get('completed_at')
+            'completed_at': task_status.get('completed_at'),
+            'source': 'database'
         }
         
     except HTTPException:
