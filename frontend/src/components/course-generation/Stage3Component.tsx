@@ -321,24 +321,31 @@ export default function Stage3Component({
     // If dropped in the same position, do nothing
     if (destination.index === source.index) return;
 
+    console.log('Drag result:', { source: source.index, destination: destination.index, draggableId });
+
     try {
-      // Extract pathway and module info from draggableId
-      const [pathwayIndexStr, moduleIndexStr] = draggableId.split('-');
+      // Extract pathway index from draggableId (format: "pathwayIndex-moduleIndex")
+      const [pathwayIndexStr] = draggableId.split('-');
       const pathwayIndex = parseInt(pathwayIndexStr);
       
       const pathway = stage3Data?.pathways[pathwayIndex];
       if (!pathway || !pathway.id) return;
 
-      // Create new module order
-      const modules = [...(pathway.modules || [])];
-      const [reorderedModule] = modules.splice(source.index, 1);
-      modules.splice(destination.index, 0, reorderedModule);
+      // Get current modules array
+      const currentModules = [...(pathway.modules || [])];
+      console.log('Current modules before reorder:', currentModules.map(m => m.title));
+
+      // Perform the reorder locally first (optimistic update)
+      const [movedModule] = currentModules.splice(source.index, 1);
+      currentModules.splice(destination.index, 0, movedModule);
+
+      console.log('Modules after local reorder:', currentModules.map(m => m.title));
 
       // Update UI optimistically
       const updatedPathways = [...(stage3Data?.pathways || [])];
       updatedPathways[pathwayIndex] = {
         ...pathway,
-        modules: modules
+        modules: currentModules
       };
       
       setStage3Data({
@@ -346,12 +353,14 @@ export default function Stage3Component({
         pathways: updatedPathways
       });
 
-      // Create module order array (indices in new order)
-      const moduleOrder = modules.map((_, index) => {
-        // Find where this module was in the original order
-        const originalIndex = pathway.modules?.findIndex(m => m.id === modules[index].id) || index;
-        return originalIndex;
+      // Create simple module order array - just the new sequence of original indices
+      const moduleOrder = currentModules.map((module, newIndex) => {
+        // Find this module's original index in the unmodified pathway
+        const originalIndex = pathway.modules?.findIndex(originalModule => originalModule.id === module.id);
+        return originalIndex !== undefined && originalIndex !== -1 ? originalIndex : newIndex;
       });
+
+      console.log('Module order being sent to API:', moduleOrder);
 
       // Call API to persist the change
       const reorderRequest: ModuleReorderRequest = {
@@ -359,10 +368,12 @@ export default function Stage3Component({
       };
 
       await reorderModules(courseId, pathway.id, reorderRequest);
+      console.log('API call successful');
       
       // Refresh data to ensure consistency
       const refreshedData = await getStage3Result(courseId);
       setStage3Data(refreshedData);
+      console.log('Data refreshed successfully');
 
     } catch (error) {
       console.error('Error reordering modules:', error);
