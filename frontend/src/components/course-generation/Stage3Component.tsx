@@ -4,11 +4,12 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Course, GenerationStatus, Stage3Response, Stage3Input, PathwaySummary, ModuleSummary } from '@/lib/types';
+import { Course, GenerationStatus, Stage3Response, Stage3Input, PathwaySummary, ModuleSummary, ModuleReorderRequest } from '@/lib/types';
 import { 
   startStage3, 
   getGenerationStatus, 
-  getStage3Result
+  getStage3Result,
+  reorderModules
 } from '@/lib/api';
 import { 
   Route, 
@@ -26,9 +27,13 @@ import {
   Edit,
   Plus,
   X,
-  FileText
+  FileText,
+  GripVertical
 } from 'lucide-react';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import ModuleEditModal from './ModuleEditModal';
+import AddModuleModal from './AddModuleModal';
+import DeleteModuleModal from './DeleteModuleModal';
 
 const stage3Schema = z.object({
   complexity_level: z.string().min(1, 'Complexity level is required'),
@@ -50,8 +55,9 @@ export default function Stage3Component({
   onStatusUpdate, 
   onStageComplete 
 }: Stage3ComponentProps) {
+  const [status, setStatus] = useState<string>('pending');
   const [stage3Data, setStage3Data] = useState<Stage3Response | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [pollingStatus, setPollingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
@@ -63,12 +69,24 @@ export default function Stage3Component({
     moduleIndex: number;
     module: ModuleSummary;
   } | null>(null);
+  const [addingModule, setAddingModule] = useState<{
+    pathwayIndex: number;
+    pathwayTitle: string;
+  } | null>(null);
+  const [deletingModule, setDeletingModule] = useState<{
+    pathwayIndex: number;
+    pathwayId: string;
+    pathwayTitle: string;
+    moduleIndex: number;
+    module: ModuleSummary;
+  } | null>(null);
 
   const {
     register,
     handleSubmit,
     formState: { errors },
-    watch
+    watch,
+    reset
   } = useForm<Stage3FormData>({
     resolver: zodResolver(stage3Schema),
     defaultValues: {
@@ -77,7 +95,7 @@ export default function Stage3Component({
     }
   });
 
-  const complexityLevel = watch('complexity_level');
+  const watchedComplexity = watch('complexity_level');
   const additionalInstructions = watch('additional_instructions');
 
   // Load existing data on component mount
@@ -122,7 +140,7 @@ export default function Stage3Component({
       return; // Prevent multiple starts
     }
     
-    setLoading(true);
+    setIsLoading(true);
     setIsStarting(true);
     setError(null);
     setHasStarted(true);
@@ -138,7 +156,7 @@ export default function Stage3Component({
       setError(err.detail || 'Failed to start pathway generation');
       setHasStarted(false);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
       setIsStarting(false);
     }
   };
@@ -232,8 +250,33 @@ export default function Stage3Component({
     });
   };
 
+  const handleAddModule = (pathwayIndex: number, pathwayTitle: string) => {
+    setAddingModule({
+      pathwayIndex,
+      pathwayTitle
+    });
+  };
+
+  const handleDeleteModule = (pathwayIndex: number, pathwayId: string, pathwayTitle: string, moduleIndex: number, module: ModuleSummary) => {
+    setDeletingModule({
+      pathwayIndex,
+      pathwayId,
+      pathwayTitle,
+      moduleIndex,
+      module
+    });
+  };
+
   const handleCloseEditModal = () => {
     setEditingModule(null);
+  };
+
+  const handleCloseAddModal = () => {
+    setAddingModule(null);
+  };
+
+  const handleCloseDeleteModal = () => {
+    setDeletingModule(null);
   };
 
   const handleSaveModule = async () => {
@@ -245,6 +288,92 @@ export default function Stage3Component({
       console.error('Error refreshing stage 3 data:', error);
     }
     setEditingModule(null);
+  };
+
+  const handleModuleAdded = async () => {
+    // Refresh the stage 3 data after adding
+    try {
+      const updatedStage3Result = await getStage3Result(courseId);
+      setStage3Data(updatedStage3Result);
+    } catch (error) {
+      console.error('Error refreshing stage 3 data:', error);
+    }
+    setAddingModule(null);
+  };
+
+  const handleModuleDeleted = async () => {
+    // Refresh the stage 3 data after deleting
+    try {
+      const updatedStage3Result = await getStage3Result(courseId);
+      setStage3Data(updatedStage3Result);
+    } catch (error) {
+      console.error('Error refreshing stage 3 data:', error);
+    }
+    setDeletingModule(null);
+  };
+
+  const handleDragEnd = async (result: DropResult) => {
+    const { destination, source, draggableId } = result;
+
+    // If dropped outside a droppable area, do nothing
+    if (!destination) return;
+
+    // If dropped in the same position, do nothing
+    if (destination.index === source.index) return;
+
+    try {
+      // Extract pathway and module info from draggableId
+      const [pathwayIndexStr, moduleIndexStr] = draggableId.split('-');
+      const pathwayIndex = parseInt(pathwayIndexStr);
+      
+      const pathway = stage3Data?.pathways[pathwayIndex];
+      if (!pathway || !pathway.id) return;
+
+      // Create new module order
+      const modules = [...(pathway.modules || [])];
+      const [reorderedModule] = modules.splice(source.index, 1);
+      modules.splice(destination.index, 0, reorderedModule);
+
+      // Update UI optimistically
+      const updatedPathways = [...(stage3Data?.pathways || [])];
+      updatedPathways[pathwayIndex] = {
+        ...pathway,
+        modules: modules
+      };
+      
+      setStage3Data({
+        ...stage3Data!,
+        pathways: updatedPathways
+      });
+
+      // Create module order array (indices in new order)
+      const moduleOrder = modules.map((_, index) => {
+        // Find where this module was in the original order
+        const originalIndex = pathway.modules?.findIndex(m => m.id === modules[index].id) || index;
+        return originalIndex;
+      });
+
+      // Call API to persist the change
+      const reorderRequest: ModuleReorderRequest = {
+        module_order: moduleOrder
+      };
+
+      await reorderModules(courseId, pathway.id, reorderRequest);
+      
+      // Refresh data to ensure consistency
+      const refreshedData = await getStage3Result(courseId);
+      setStage3Data(refreshedData);
+
+    } catch (error) {
+      console.error('Error reordering modules:', error);
+      // Revert optimistic update by refreshing from server
+      try {
+        const refreshedData = await getStage3Result(courseId);
+        setStage3Data(refreshedData);
+      } catch (refreshError) {
+        console.error('Error refreshing after failed reorder:', refreshError);
+      }
+    }
   };
 
   return (
@@ -282,7 +411,7 @@ export default function Stage3Component({
                         disabled={hasStarted}
                       />
                       <div className={`cursor-pointer border-2 rounded-xl p-4 transition-all ${
-                        complexityLevel === level
+                        watchedComplexity === level
                           ? 'border-purple-500 bg-purple-50'
                           : 'border-gray-200 hover:border-gray-300'
                       } ${hasStarted ? 'opacity-50 cursor-not-allowed' : ''}`}>
@@ -325,10 +454,10 @@ export default function Stage3Component({
               {!hasStarted && (
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={isLoading}
                   className="flex items-center space-x-2 px-6 py-3 bg-purple-600 text-white font-semibold rounded-xl hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  {loading ? (
+                  {isLoading ? (
                     <>
                       <RefreshCw className="w-5 h-5 animate-spin" />
                       <span>Starting...</span>
@@ -440,177 +569,209 @@ export default function Stage3Component({
           <div>
             <h3 className="text-xl font-bold text-gray-900 mb-6">Generated Learning Pathways</h3>
             <div className="space-y-8">
-              {stage3Data.pathways?.map((pathway, pathwayIndex) => (
-                <div key={pathway.id || pathwayIndex} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-                  {/* Pathway Header */}
-                  <div className="bg-gradient-to-r from-purple-500 to-indigo-600 text-white p-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <span className="px-3 py-1 bg-white bg-opacity-20 rounded-full text-xs font-medium">
-                            Pathway {pathway.index + 1}
-                          </span>
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium border ${
-                            pathway.complexity === 'beginner' ? 'bg-green-100 text-green-800 border-green-200' :
-                            pathway.complexity === 'intermediate' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
-                            'bg-red-100 text-red-800 border-red-200'
-                          }`}>
-                            {pathway.complexity}
-                          </span>
+              <DragDropContext onDragEnd={handleDragEnd}>
+                {stage3Data.pathways?.map((pathway, pathwayIndex) => (
+                  <div key={pathway.id || pathwayIndex} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+                    {/* Pathway Header */}
+                    <div className="bg-gradient-to-r from-purple-500 to-indigo-600 text-white p-6">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="px-3 py-1 bg-white bg-opacity-20 rounded-full text-xs font-medium">
+                              Pathway {pathway.index + 1}
+                            </span>
+                            <span className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                              pathway.complexity === 'beginner' ? 'bg-green-100 text-green-800 border-green-200' :
+                              pathway.complexity === 'intermediate' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+                              'bg-red-100 text-red-800 border-red-200'
+                            }`}>
+                              {pathway.complexity}
+                            </span>
+                          </div>
+                          <h4 className="text-xl font-bold mb-2">{pathway.title}</h4>
+                          <p className="text-purple-100 leading-relaxed">{pathway.description}</p>
                         </div>
-                        <h4 className="text-xl font-bold mb-2">{pathway.title}</h4>
-                        <p className="text-purple-100 leading-relaxed">{pathway.description}</p>
-                      </div>
-                      <div className="ml-6 text-right">
-                        <div className="text-3xl font-bold">{pathway.modules?.length || 0}</div>
-                        <div className="text-sm text-purple-200">Learning Modules</div>
+                        <div className="ml-6 text-right">
+                          <div className="text-3xl font-bold">{pathway.modules?.length || 0}</div>
+                          <div className="text-sm text-purple-200">Learning Modules</div>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Modules - Single Column Layout */}
-                  <div className="p-6">
-                    <div className="flex items-center justify-between mb-6">
-                      <h5 className="text-lg font-semibold text-gray-900">Learning Modules</h5>
-                      <div className="flex items-center space-x-2 text-xs text-gray-500">
-                        <span>Future: Drag to reorder</span>
-                        <div className="flex space-x-1">
-                          <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
-                          <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
-                          <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                    {/* Modules - Single Column Layout */}
+                    <div className="p-6">
+                      <div className="flex items-center justify-between mb-6">
+                        <h5 className="text-lg font-semibold text-gray-900">Learning Modules</h5>
+                        <div className="flex items-center space-x-2 text-xs text-green-600">
+                          <GripVertical className="w-3 h-3" />
+                          <span>Drag to reorder</span>
                         </div>
                       </div>
-                    </div>
-                    
-                    {/* Single Column Module List */}
-                    <div className="space-y-4">
-                      {pathway.modules?.map((module, moduleIndex) => (
-                        <div 
-                          key={module.id || moduleIndex} 
-                          className="group border border-gray-200 rounded-xl overflow-hidden hover:border-purple-300 hover:shadow-md transition-all duration-200"
-                        >
-                          {/* Module Header */}
-                          <div className="bg-gradient-to-r from-gray-50 to-purple-50 border-b border-gray-200 p-4">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center space-x-4">
-                                {/* Drag Handle (Future) */}
-                                <div className="flex flex-col space-y-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-move">
-                                  <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
-                                  <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
-                                  <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
-                                  <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
-                                  <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
-                                  <div className="w-1 h-1 bg-gray-400 rounded-full"></div>
-                                </div>
-                                
-                                {/* Module Number */}
-                                <div className="flex-shrink-0 w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-                                  <span className="text-sm font-bold text-purple-600">{moduleIndex + 1}</span>
-                                </div>
-                                
-                                {/* Module Info */}
-                                <div className="flex-1">
-                                  <div className="flex items-center space-x-2 mb-1">
-                                    <h6 className="text-lg font-semibold text-gray-900">{module.title}</h6>
-                                    {module.theme && (
-                                      <span className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-full font-medium">
-                                        {module.theme}
-                                      </span>
-                                    )}
+                      
+                      {/* Single Column Module List */}
+                      <Droppable droppableId={`modules-${pathwayIndex}`} type="module">
+                        {(provided, snapshot) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.droppableProps}
+                            className={`space-y-4 ${snapshot.isDraggingOver ? 'border-purple-300' : ''}`}
+                          >
+                            {pathway.modules?.map((module, moduleIndex) => (
+                              <Draggable
+                                key={module.id || moduleIndex} 
+                                draggableId={`${pathwayIndex}-${moduleIndex}`}
+                                index={moduleIndex}
+                              >
+                                {(provided, snapshot) => (
+                                  <div
+                                    ref={provided.innerRef}
+                                    {...provided.draggableProps}
+                                    {...provided.dragHandleProps}
+                                    className={`group border border-gray-200 rounded-xl overflow-hidden hover:border-purple-300 hover:shadow-md transition-all duration-200 ${snapshot.isDragging ? 'shadow-lg' : ''}`}
+                                  >
+                                    {/* Module Header */}
+                                    <div className="bg-gradient-to-r from-gray-50 to-purple-50 border-b border-gray-200 p-4">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center space-x-4">
+                                          {/* Drag Handle */}
+                                          <div className="flex flex-col space-y-1 opacity-60 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing" title="Drag to reorder">
+                                            <GripVertical className="w-5 h-5 text-gray-500 hover:text-purple-600" />
+                                          </div>
+                                          
+                                          {/* Module Number */}
+                                          <div className="flex-shrink-0 w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                                            <span className="text-sm font-bold text-purple-600">{moduleIndex + 1}</span>
+                                          </div>
+                                          
+                                          {/* Module Info */}
+                                          <div className="flex-1">
+                                            <div className="flex items-center space-x-2 mb-1">
+                                              <h6 className="text-lg font-semibold text-gray-900">{module.title}</h6>
+                                              {module.theme && (
+                                                <span className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-full font-medium">
+                                                  {module.theme}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <p className="text-sm text-gray-600 leading-relaxed">{module.description}</p>
+                                          </div>
+                                        </div>
+                                        
+                                        {/* Action Buttons */}
+                                        <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                          <button 
+                                            onClick={() => handleEditModule(pathwayIndex, moduleIndex, module)}
+                                            className="relative p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 hover:shadow-md hover:scale-105 rounded-lg transition-all duration-200 group/edit" 
+                                            title="Edit Module"
+                                          >
+                                            <Edit className="w-4 h-4" />
+                                            <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover/edit:opacity-100 transition-opacity whitespace-nowrap z-10">
+                                              Edit Module
+                                            </span>
+                                          </button>
+                                          <button 
+                                            onClick={() => handleAddModule(pathwayIndex, pathway.title)}
+                                            className="relative p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 hover:shadow-md hover:scale-105 rounded-lg transition-all duration-200 group/add" 
+                                            title="Add Module After"
+                                          >
+                                            <Plus className="w-4 h-4" />
+                                            <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover/add:opacity-100 transition-opacity whitespace-nowrap z-10">
+                                              Add Module
+                                            </span>
+                                          </button>
+                                          <button 
+                                            onClick={() => handleDeleteModule(pathwayIndex, pathway.id || '', pathway.title, moduleIndex, module)}
+                                            className="relative p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 hover:shadow-md hover:scale-105 rounded-lg transition-all duration-200 group/delete" 
+                                            title="Delete Module"
+                                          >
+                                            <X className="w-4 h-4" />
+                                            <span className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded opacity-0 group-hover/delete:opacity-100 transition-opacity whitespace-nowrap z-10">
+                                              Delete Module
+                                            </span>
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Module Content */}
+                                    <div className="p-4">
+                                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                        {/* Learning Objectives */}
+                                        {module.learning_objectives && module.learning_objectives.length > 0 && (
+                                          <div>
+                                            <div className="text-sm font-semibold text-gray-900 mb-2 flex items-center">
+                                              <Target className="w-4 h-4 text-green-600 mr-2" />
+                                              Learning Objectives
+                                            </div>
+                                            <ul className="space-y-2">
+                                              {module.learning_objectives.map((objective, objIndex) => (
+                                                <li key={objIndex} className="flex items-start space-x-2">
+                                                  <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+                                                  <span className="text-sm text-gray-700">{objective}</span>
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+
+                                        {/* Source Documents */}
+                                        <div>
+                                          <div className="text-sm font-semibold text-gray-900 mb-2 flex items-center">
+                                            <FileText className="w-4 h-4 text-blue-600 mr-2" />
+                                            Source Documents
+                                          </div>
+                                          <div className="space-y-2">
+                                            {module.documents && module.documents.length > 0 ? (
+                                              module.documents.map((docPath, docIndex) => (
+                                                <div key={docIndex} className="flex items-center space-x-2 text-xs bg-blue-50 border border-blue-200 rounded-lg p-2">
+                                                  <FileText className="w-3 h-3 text-blue-600 flex-shrink-0" />
+                                                  <span className="font-mono text-blue-800 break-all flex-1">{getCleanPath(docPath)}</span>
+                                                </div>
+                                              ))
+                                            ) : (
+                                              <div className="text-sm text-gray-500 italic bg-gray-50 border border-gray-200 rounded-lg p-2">
+                                                No source documents assigned
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Module Stats */}
+                                      <div className="mt-4 pt-4 border-t border-gray-100">
+                                        <div className="flex items-center justify-between text-xs text-gray-500">
+                                          <span>Module {moduleIndex + 1} of {pathway.modules?.length}</span>
+                                          <div className="flex items-center space-x-4">
+                                            <span>{module.learning_objectives?.length || 0} objectives</span>
+                                            <span>{module.documents?.length || 0} documents</span>
+                                            {module.estimated_time && <span>{module.estimated_time}</span>}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
                                   </div>
-                                  <p className="text-sm text-gray-600 leading-relaxed">{module.description}</p>
-                                </div>
-                              </div>
-                              
-                              {/* Action Buttons (Future) */}
-                              <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button 
-                                  onClick={() => handleEditModule(pathwayIndex, moduleIndex, module)}
-                                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" 
-                                  title="Edit Module"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </button>
-                                <button className="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors" title="Add Module After">
-                                  <Plus className="w-4 h-4" />
-                                </button>
-                                <button className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete Module">
-                                  <X className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </div>
+                                )}
+                              </Draggable>
+                            ))}
+                            {provided.placeholder}
                           </div>
+                        )}
+                      </Droppable>
 
-                          {/* Module Content */}
-                          <div className="p-4">
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                                             {/* Learning Objectives */}
-                               {module.learning_objectives && module.learning_objectives.length > 0 && (
-                                 <div>
-                                   <div className="text-sm font-semibold text-gray-900 mb-2 flex items-center">
-                                     <Target className="w-4 h-4 text-green-600 mr-2" />
-                                     Learning Objectives
-                                   </div>
-                                  <ul className="space-y-2">
-                                    {module.learning_objectives.map((objective, objIndex) => (
-                                      <li key={objIndex} className="flex items-start space-x-2">
-                                        <CheckCircle className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-                                        <span className="text-sm text-gray-700">{objective}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-
-                                                             {/* Source Documents */}
-                               <div>
-                                 <div className="text-sm font-semibold text-gray-900 mb-2 flex items-center">
-                                   <FileText className="w-4 h-4 text-blue-600 mr-2" />
-                                   Source Documents
-                                 </div>
-                                 <div className="space-y-2">
-                                   {module.documents && module.documents.length > 0 ? (
-                                     module.documents.map((docPath, docIndex) => (
-                                       <div key={docIndex} className="flex items-center space-x-2 text-xs bg-blue-50 border border-blue-200 rounded-lg p-2">
-                                         <FileText className="w-3 h-3 text-blue-600 flex-shrink-0" />
-                                         <span className="font-mono text-blue-800 break-all flex-1">{getCleanPath(docPath)}</span>
-                                       </div>
-                                     ))
-                                   ) : (
-                                     <div className="text-sm text-gray-500 italic bg-gray-50 border border-gray-200 rounded-lg p-2">
-                                       No source documents assigned
-                                     </div>
-                                   )}
-                                 </div>
-                               </div>
-                            </div>
-
-                            {/* Module Stats */}
-                            <div className="mt-4 pt-4 border-t border-gray-100">
-                              <div className="flex items-center justify-between text-xs text-gray-500">
-                                <span>Module {moduleIndex + 1} of {pathway.modules?.length}</span>
-                                <div className="flex items-center space-x-4">
-                                  <span>{module.learning_objectives?.length || 0} objectives</span>
-                                  <span>{module.documents?.length || 0} documents</span>
-                                  {module.estimated_time && <span>{module.estimated_time}</span>}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Add Module Button (Future) */}
-                    <div className="mt-6 pt-4 border-t border-gray-200">
-                      <button className="w-full flex items-center justify-center space-x-2 py-4 text-purple-600 border-2 border-dashed border-purple-300 rounded-xl hover:border-purple-400 hover:bg-purple-50 transition-colors">
-                        <Plus className="w-5 h-5" />
-                        <span className="font-medium">Add New Module</span>
-                      </button>
+                      {/* Add Module Button */}
+                      <div className="mt-6 pt-4 border-t border-gray-200">
+                        <button 
+                          onClick={() => handleAddModule(pathwayIndex, pathway.title)}
+                          className="w-full flex items-center justify-center space-x-2 py-4 text-green-600 border-2 border-dashed border-green-300 rounded-xl hover:border-green-400 hover:bg-green-50 transition-colors"
+                        >
+                          <Plus className="w-5 h-5" />
+                          <span className="font-medium">Add New Module</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </DragDropContext>
             </div>
           </div>
 
@@ -639,6 +800,31 @@ export default function Stage3Component({
           isOpen={true}
           onClose={handleCloseEditModal}
           onSave={handleSaveModule}
+        />
+      )}
+
+      {/* Add Module Modal */}
+      {addingModule && (
+        <AddModuleModal
+          courseId={courseId}
+          pathwayIndex={addingModule.pathwayIndex}
+          pathwayTitle={addingModule.pathwayTitle}
+          isOpen={true}
+          onClose={handleCloseAddModal}
+          onSave={handleModuleAdded}
+        />
+      )}
+
+      {/* Delete Module Modal */}
+      {deletingModule && (
+        <DeleteModuleModal
+          courseId={courseId}
+          pathwayId={deletingModule.pathwayId}
+          pathwayTitle={deletingModule.pathwayTitle}
+          module={deletingModule.module}
+          isOpen={true}
+          onClose={handleCloseDeleteModal}
+          onDelete={handleModuleDeleted}
         />
       )}
     </div>
