@@ -676,7 +676,8 @@ def stage3_pathway_building(self, user_id: str, course_id: str, user_input: Dict
             target_complexity=target_complexity,
             additional_instructions=stage3_input.additional_instructions,
             task_id=self.request.id,
-            redis_client=redis_client
+            redis_client=redis_client,
+            course_id=course_id
         )
         
         if not stage3_result or not stage3_result.learning_paths:

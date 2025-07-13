@@ -938,9 +938,9 @@ async def get_stage2_progress(course_id: str = Query(..., description="Course ID
 
 @router.get("/stage3/progress")
 async def get_stage3_progress(course_id: str = Query(..., description="Course ID")):
-    """Get progress for Stage 3 pathway generation"""
+    """Get detailed progress for Stage 3 pathway generation"""
     try:
-        # Use lean service to get task status
+        # Get basic task status from database
         task_status = pathway_service.get_task_status(course_id)
         
         if task_status['status'] == 'not_started':
@@ -949,15 +949,63 @@ async def get_stage3_progress(course_id: str = Query(..., description="Course ID
                 detail="Stage 3 task not found"
             )
         
-        # Return simplified progress info from database
-        return {
-            'status': task_status['status'],
-            'progress': task_status['progress'],
-            'current_step': task_status.get('current_step', ''),
-            'error': task_status.get('error_message'),
-            'started_at': task_status.get('started_at'),
-            'completed_at': task_status.get('completed_at')
-        }
+        # Try to get detailed progress from Redis
+        redis_client = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        progress_key = f"stage3_progress:{course_id}"
+        
+        try:
+            detailed_progress_data = redis_client.get(progress_key)
+            if detailed_progress_data:
+                detailed_progress = json.loads(detailed_progress_data)
+                
+                # Return detailed progress with fallback to basic status
+                return {
+                    'status': task_status['status'],
+                    'progress': task_status['progress'],
+                    'current_step': task_status.get('current_step', ''),
+                    'error': task_status.get('error_message'),
+                    'started_at': task_status.get('started_at'),
+                    'completed_at': task_status.get('completed_at'),
+                    # Detailed progress data
+                    'detailed': {
+                        'stage': detailed_progress.get('stage', ''),
+                        'current_round': detailed_progress.get('current_round', 0),
+                        'max_rounds': detailed_progress.get('max_rounds', 3),
+                        'current_step': detailed_progress.get('current_step', ''),
+                        'target_complexity': detailed_progress.get('target_complexity', ''),
+                        'total_documents': detailed_progress.get('total_documents', 0),
+                        'debate_history': detailed_progress.get('debate_history', []),
+                        'proposals_generated': detailed_progress.get('proposals_generated', 0),
+                        'total_modules_proposed': detailed_progress.get('total_modules_proposed', 0),
+                        'is_acceptable': detailed_progress.get('is_acceptable', False),
+                        'stage_description': detailed_progress.get('stage_description', ''),
+                        'final_paths_count': detailed_progress.get('final_paths_count', 0),
+                        'final_modules_count': detailed_progress.get('final_modules_count', 0)
+                    }
+                }
+            else:
+                # No detailed progress found, return basic status
+                return {
+                    'status': task_status['status'],
+                    'progress': task_status['progress'],
+                    'current_step': task_status.get('current_step', ''),
+                    'error': task_status.get('error_message'),
+                    'started_at': task_status.get('started_at'),
+                    'completed_at': task_status.get('completed_at'),
+                    'detailed': None
+                }
+        except Exception as redis_error:
+            logger.warning(f"Failed to get detailed progress from Redis: {redis_error}")
+            # Return basic status if Redis fails
+            return {
+                'status': task_status['status'],
+                'progress': task_status['progress'],
+                'current_step': task_status.get('current_step', ''),
+                'error': task_status.get('error_message'),
+                'started_at': task_status.get('started_at'),
+                'completed_at': task_status.get('completed_at'),
+                'detailed': None
+            }
         
     except HTTPException:
         raise

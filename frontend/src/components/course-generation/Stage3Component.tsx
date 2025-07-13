@@ -4,12 +4,13 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Course, GenerationStatus, Stage3Response, Stage3Input, PathwaySummary, ModuleSummary, ModuleReorderRequest } from '@/lib/types';
+import { Course, GenerationStatus, Stage3Response, Stage3Input, PathwaySummary, ModuleSummary, ModuleReorderRequest, Stage3Progress } from '@/lib/types';
 import { 
   startStage3, 
   getGenerationStatus, 
   getStage3Result,
-  reorderModules
+  reorderModules,
+  getStage3Progress
 } from '@/lib/api';
 import { 
   Route, 
@@ -80,6 +81,7 @@ export default function Stage3Component({
     moduleIndex: number;
     module: ModuleSummary;
   } | null>(null);
+  const [detailedProgress, setDetailedProgress] = useState<Stage3Progress | null>(null);
 
   const {
     register,
@@ -161,15 +163,24 @@ export default function Stage3Component({
     }
   };
 
-  // Poll for stage completion
+  // Poll for stage completion with detailed progress
   const pollForStageCompletion = async () => {
     const maxAttempts = 120; // 10 minutes with 5-second intervals
     let attempts = 0;
 
     const poll = async () => {
       try {
-        const status = await getGenerationStatus(courseId);
+        const [status, progress] = await Promise.all([
+          getGenerationStatus(courseId),
+          getStage3Progress(courseId).catch(() => null) // Don't fail if detailed progress is unavailable
+        ]);
+        
         onStatusUpdate(status);
+        
+        // Update detailed progress if available
+        if (progress) {
+          setDetailedProgress(progress);
+        }
 
         if (status.stage_statuses.PATHWAY_BUILDING === 'completed') {
           setIsComplete(true);
@@ -489,32 +500,177 @@ export default function Stage3Component({
       {/* Status Display */}
       {hasStarted && !isComplete && (
         <div className="mb-8">
-          <div className={`border rounded-xl p-6 ${
-            pollingStatus ? 'bg-blue-50 border-blue-200' : 
-            'bg-red-50 border-red-200'
-          }`}>
-            <div className="flex items-center space-x-3">
-              {pollingStatus ? (
-                <>
-                  <Clock className="w-6 h-6 text-blue-600 animate-pulse" />
-                  <div>
-                    <h3 className="text-lg font-semibold text-blue-900">Generating Learning Pathways</h3>
-                    <p className="text-blue-700">
-                      AI is analyzing documents and creating structured learning pathways...
-                    </p>
+          {pollingStatus ? (
+            /* AI Debate Visualization */
+            <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-xl p-6">
+              <div className="flex items-center space-x-3 mb-6">
+                <div className="flex-shrink-0 w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
+                  <Users className="w-6 h-6 text-purple-600 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-purple-900">🎭 AI Debate System</h3>
+                  <p className="text-sm text-purple-700">
+                    {detailedProgress?.detailed?.stage_description || 'AI agents are collaborating to create optimal learning pathways...'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Progress Information */}
+              {detailedProgress?.detailed ? (
+                <div className="space-y-4">
+                  {/* Current Round Progress */}
+                  <div className="bg-white bg-opacity-70 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-medium text-purple-800">
+                        Round {detailedProgress.detailed.current_round} of {detailedProgress.detailed.max_rounds}
+                      </span>
+                      <span className="text-sm text-purple-600">
+                        {detailedProgress.detailed.current_step}
+                      </span>
+                    </div>
+                    
+                    {/* Round Progress Bar */}
+                    <div className="w-full bg-purple-200 rounded-full h-2 mb-2">
+                      <div 
+                        className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                        style={{ 
+                          width: `${Math.min((detailedProgress.detailed.current_round / detailedProgress.detailed.max_rounds) * 100, 100)}%` 
+                        }}
+                      ></div>
+                    </div>
+                    
+                    {/* Current Activity */}
+                    <div className="flex items-center space-x-2 text-sm">
+                      {detailedProgress.detailed.current_step === 'proposer' && (
+                        <>
+                          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                          <span className="text-blue-700">💡 Proposer creating learning path...</span>
+                        </>
+                      )}
+                      {detailedProgress.detailed.current_step === 'critic' && (
+                        <>
+                          <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+                          <span className="text-orange-700">🔍 Critic evaluating proposal...</span>
+                        </>
+                      )}
+                      {detailedProgress.detailed.current_step === 'completed' && (
+                        <>
+                          <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                          <span className="text-green-700">✅ Round completed</span>
+                        </>
+                      )}
+                      {detailedProgress.detailed.current_step === 'accepted' && (
+                        <>
+                          <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                          <span className="text-green-700">🎉 Proposal accepted!</span>
+                        </>
+                      )}
+                      {detailedProgress.detailed.current_step === 'starting' && (
+                        <>
+                          <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+                          <span className="text-purple-700">🚀 Starting debate round...</span>
+                        </>
+                      )}
+                    </div>
                   </div>
-                </>
+
+                  {/* Proposals Generated */}
+                  {detailedProgress.detailed.proposals_generated > 0 && (
+                    <div className="bg-white bg-opacity-70 rounded-lg p-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-purple-800">
+                          📝 Proposals Generated: {detailedProgress.detailed.proposals_generated}
+                        </span>
+                        <span className="text-purple-600">
+                          🧩 {detailedProgress.detailed.total_modules_proposed} modules proposed
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Debate History */}
+                  {detailedProgress.detailed.debate_history && detailedProgress.detailed.debate_history.length > 0 && (
+                    <div className="bg-white bg-opacity-70 rounded-lg p-4">
+                      <h4 className="text-sm font-semibold text-purple-900 mb-3">Debate History</h4>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {detailedProgress.detailed.debate_history.map((entry, index) => (
+                          <div key={index} className="flex items-start space-x-3 text-xs">
+                            <div className="flex-shrink-0 mt-1">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold ${
+                                entry.severity === 'acceptable' ? 'bg-green-500' :
+                                entry.severity === 'minor_issues' ? 'bg-yellow-500' :
+                                'bg-red-500'
+                              }`}>
+                                {entry.round}
+                              </div>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center space-x-2 mb-1">
+                                <span className="font-medium text-purple-900">Round {entry.round}</span>
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  entry.severity === 'acceptable' ? 'bg-green-100 text-green-700' :
+                                  entry.severity === 'minor_issues' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>
+                                  {entry.severity.replace('_', ' ')}
+                                </span>
+                              </div>
+                              {entry.critique_summary && (
+                                <p className="text-gray-600 truncate">
+                                  💬 {entry.critique_summary}
+                                </p>
+                              )}
+                              {entry.reasoning && (
+                                <p className="text-gray-500 truncate mt-1">
+                                  💡 {entry.reasoning}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Acceptance Status */}
+                  {detailedProgress.detailed.is_acceptable && (
+                    <div className="bg-green-100 border border-green-200 rounded-lg p-3">
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle className="w-5 h-5 text-green-600" />
+                        <span className="text-sm font-medium text-green-800">
+                          🎉 Proposal accepted by AI critic! Finalizing learning pathway...
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               ) : (
-                <>
-                  <AlertCircle className="w-6 h-6 text-red-600" />
-                  <div>
-                    <h3 className="text-lg font-semibold text-red-900">Generation Failed</h3>
-                    <p className="text-red-700">Please try again or check your configuration.</p>
+                /* Fallback Simple Progress */
+                <div className="bg-white bg-opacity-70 rounded-lg p-4">
+                  <div className="flex items-center space-x-3 mb-3">
+                    <Clock className="w-5 h-5 text-purple-600 animate-pulse" />
+                    <span className="text-sm font-medium text-purple-800">
+                      Initializing AI debate system...
+                    </span>
                   </div>
-                </>
+                  <div className="w-full bg-purple-200 rounded-full h-2">
+                    <div className="bg-purple-600 h-2 rounded-full animate-pulse" style={{ width: '50%' }}></div>
+                  </div>
+                </div>
               )}
             </div>
-          </div>
+          ) : (
+            /* Error State */
+            <div className="bg-red-50 border border-red-200 rounded-xl p-6">
+              <div className="flex items-center space-x-3">
+                <AlertCircle className="w-6 h-6 text-red-600" />
+                <div>
+                  <h3 className="text-lg font-semibold text-red-900">Generation Failed</h3>
+                  <p className="text-red-700">Please try again or check your configuration.</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

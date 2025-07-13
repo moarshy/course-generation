@@ -226,11 +226,18 @@ class DebateLearningPathGenerator(dspy.Module):
     
     def _run_debate_round(self, round_num: int, documents_info: str, target_complexity: str,
                          overview_context: str, previous_critique: str, 
-                         additional_instructions: str) -> Tuple[Optional[LearningPath], str]:
+                         additional_instructions: str, progress_tracker: 'S3ProgressTracker' = None) -> Tuple[Optional[LearningPath], str]:
         """Run a single debate round"""
         logger.info(f"🔄 Debate Round {round_num}")
         
         # Proposer creates/refines learning path
+        if progress_tracker:
+            progress_tracker.update_debate_round(
+                round_num, 
+                "proposer", 
+                f"Proposer creating learning path proposal..."
+            )
+        
         try:
             proposal_result = self.proposer(
                 agent_instructions=f"{AGENT_INSTRUCTIONS}\n{additional_instructions}",
@@ -241,13 +248,21 @@ class DebateLearningPathGenerator(dspy.Module):
             )
             
             current_proposal = proposal_result.learning_path_proposal
-            logger.info(f"📝 Proposer reasoning: {proposal_result.reasoning[:200]}...")
+            reasoning = proposal_result.reasoning
+            logger.info(f"📝 Proposer reasoning: {reasoning[:200]}...")
             
         except Exception as e:
             logger.error(f"❌ Proposer failed in round {round_num}: {e}")
             return None, f"Proposer failed: {e}"
         
         # Critic evaluates the proposal
+        if progress_tracker:
+            progress_tracker.update_debate_round(
+                round_num, 
+                "critic", 
+                f"Critic evaluating learning path proposal..."
+            )
+        
         try:
             critique_result = self.critic(
                 agent_instructions=f"{AGENT_INSTRUCTIONS}\n{additional_instructions}",
@@ -263,10 +278,39 @@ class DebateLearningPathGenerator(dspy.Module):
             logger.info(f"🔍 Critic assessment: {severity}")
             logger.info(f"🔍 Critique: {current_critique[:200]}...")
             
+            # Add to debate history
+            if progress_tracker:
+                progress_tracker.add_debate_history(
+                    round_num, 
+                    "completed", 
+                    "completed",
+                    severity,
+                    current_critique,
+                    reasoning
+                )
+                
+                progress_tracker.update_debate_round(
+                    round_num, 
+                    "completed", 
+                    f"Round {round_num} complete - {severity}"
+                )
+            
             return current_proposal, current_critique
             
         except Exception as e:
             logger.error(f"❌ Critic failed in round {round_num}: {e}")
+            
+            # Track failed critic
+            if progress_tracker:
+                progress_tracker.add_debate_history(
+                    round_num, 
+                    "completed", 
+                    "failed",
+                    "major_issues",
+                    f"Critic failed: {e}",
+                    reasoning if 'reasoning' in locals() else ""
+                )
+            
             return current_proposal, f"Critic failed: {e}"
     
     def generate_learning_path(self, 
@@ -274,7 +318,8 @@ class DebateLearningPathGenerator(dspy.Module):
                              target_complexity: ComplexityLevel,
                              additional_instructions: str = "",
                              overview_context: str = "",
-                             repo_name: str = "Documentation") -> Tuple[List[LearningPath], List[str]]:
+                             repo_name: str = "Documentation",
+                             progress_tracker: 'S3ProgressTracker' = None) -> Tuple[List[LearningPath], List[str]]:
         """Generate learning path through iterative debate process"""
         
         logger.info(f"🎭 Starting debate-style learning path generation for {target_complexity.value}")
@@ -295,12 +340,28 @@ class DebateLearningPathGenerator(dspy.Module):
         
         # Iterative debate process
         for round_num in range(1, S3Config.MAX_DEBATES + 1):
+            # Update progress for current round
+            if progress_tracker:
+                progress_tracker.update_debate_round(
+                    round_num, 
+                    "starting", 
+                    f"Starting AI debate round {round_num} of {S3Config.MAX_DEBATES}"
+                )
+            
             proposal, critique = self._run_debate_round(
                 round_num, documents_info, target_complexity.value,
-                overview_trimmed, current_critique, additional_instructions
+                overview_trimmed, current_critique, additional_instructions,
+                progress_tracker
             )
             
             if proposal is None:
+                # Track failed round
+                if progress_tracker:
+                    progress_tracker.add_debate_history(
+                        round_num, "failed", "not_reached", 
+                        "major_issues", "Proposal generation failed", ""
+                    )
+                
                 # If first round fails, create fallback
                 if round_num == 1:
                     return create_fallback_path(document_analyses, target_complexity, repo_name)
@@ -314,9 +375,20 @@ class DebateLearningPathGenerator(dspy.Module):
             all_critiques.append(critique)
             current_critique = critique
             
+            # Update proposals count
+            if progress_tracker:
+                total_modules = len(proposal.modules) if proposal else 0
+                progress_tracker.update_proposals_count(len(all_proposals), total_modules)
+            
             # Check if acceptable
             if "acceptable" in critique.lower():
                 logger.info("✅ Learning path accepted by critic")
+                if progress_tracker:
+                    progress_tracker.update_debate_round(
+                        round_num, 
+                        "accepted", 
+                        f"Proposal accepted by critic in round {round_num}"
+                    )
                 break
         
         return all_proposals, all_critiques
@@ -326,15 +398,17 @@ class DebateLearningPathGenerator(dspy.Module):
 # =============================================================================
 
 class S3ProgressTracker:
-    """Tracks and updates Stage 3 progress"""
+    """Tracks and updates Stage 3 progress with detailed debate tracking"""
     
-    def __init__(self, redis_client: redis.Redis, task_id: str):
+    def __init__(self, redis_client: redis.Redis, task_id: str, course_id: str = None):
         self.redis = redis_client
         self.task_id = task_id
+        self.course_id = course_id
         self.progress_key = f"task:{task_id}:progress"
+        self.detailed_progress_key = f"stage3_progress:{course_id}" if course_id else None
     
     def update_progress(self, stage: str, progress: int, message: str = ""):
-        """Update progress in Redis"""
+        """Update basic progress in Redis"""
         try:
             progress_data = {
                 'stage': stage,
@@ -349,6 +423,160 @@ class S3ProgressTracker:
             logger.info(f"Stage 3 Progress: {progress}% - {message}")
         except Exception as e:
             logger.error(f"Failed to update progress: {e}")
+    
+    def initialize_detailed_progress(self, total_documents: int, target_complexity: str):
+        """Initialize detailed progress tracking"""
+        if not self.detailed_progress_key:
+            return
+            
+        try:
+            from datetime import datetime
+            detailed_data = {
+                'stage': 'initializing',
+                'current_round': 0,
+                'max_rounds': 3,  # S3Config.MAX_DEBATES
+                'current_step': 'preparation',
+                'target_complexity': target_complexity,
+                'total_documents': total_documents,
+                'debate_history': [],
+                'proposals_generated': 0,
+                'total_modules_proposed': 0,
+                'is_acceptable': False,
+                'stage_description': 'Preparing documents for learning pathway generation',
+                'started_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            self.redis.set(self.detailed_progress_key, json.dumps(detailed_data), ex=3600)
+            logger.info(f"Initialized Stage 3 detailed progress for {total_documents} documents")
+        except Exception as e:
+            logger.error(f"Failed to initialize detailed progress: {e}")
+    
+    def update_debate_round(self, round_num: int, step: str, description: str = ""):
+        """Update current debate round progress"""
+        if not self.detailed_progress_key:
+            return
+            
+        try:
+            from datetime import datetime
+            
+            # Get current progress
+            current_data = self.redis.get(self.detailed_progress_key)
+            if current_data:
+                detailed_data = json.loads(current_data)
+            else:
+                detailed_data = {}
+            
+            # Update round information
+            detailed_data.update({
+                'stage': f'debate_round_{round_num}',
+                'current_round': round_num,
+                'current_step': step,
+                'stage_description': description or f'AI Debate Round {round_num}: {step}',
+                'updated_at': datetime.now().isoformat()
+            })
+            
+            self.redis.set(self.detailed_progress_key, json.dumps(detailed_data), ex=3600)
+            logger.info(f"Stage 3 Round {round_num}: {step} - {description}")
+        except Exception as e:
+            logger.error(f"Failed to update debate round: {e}")
+    
+    def add_debate_history(self, round_num: int, proposal_status: str, critique_status: str, 
+                          severity: str = "", critique_summary: str = "", reasoning: str = ""):
+        """Add debate round to history"""
+        if not self.detailed_progress_key:
+            return
+            
+        try:
+            from datetime import datetime
+            
+            # Get current progress
+            current_data = self.redis.get(self.detailed_progress_key)
+            if current_data:
+                detailed_data = json.loads(current_data)
+            else:
+                detailed_data = {'debate_history': []}
+            
+            # Add new debate entry
+            debate_entry = {
+                'round': round_num,
+                'proposal_status': proposal_status,
+                'critique_status': critique_status,
+                'severity': severity,
+                'critique_summary': critique_summary[:200] + "..." if len(critique_summary) > 200 else critique_summary,
+                'reasoning': reasoning[:200] + "..." if len(reasoning) > 200 else reasoning,
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            if 'debate_history' not in detailed_data:
+                detailed_data['debate_history'] = []
+            
+            detailed_data['debate_history'].append(debate_entry)
+            detailed_data['updated_at'] = datetime.now().isoformat()
+            
+            # Update acceptance status
+            if severity and 'acceptable' in severity.lower():
+                detailed_data['is_acceptable'] = True
+            
+            self.redis.set(self.detailed_progress_key, json.dumps(detailed_data), ex=3600)
+            logger.info(f"Added debate history for round {round_num}: {severity}")
+        except Exception as e:
+            logger.error(f"Failed to add debate history: {e}")
+    
+    def update_proposals_count(self, proposals_count: int, total_modules: int):
+        """Update proposal generation counts"""
+        if not self.detailed_progress_key:
+            return
+            
+        try:
+            from datetime import datetime
+            
+            # Get current progress
+            current_data = self.redis.get(self.detailed_progress_key)
+            if current_data:
+                detailed_data = json.loads(current_data)
+            else:
+                detailed_data = {}
+            
+            detailed_data.update({
+                'proposals_generated': proposals_count,
+                'total_modules_proposed': total_modules,
+                'updated_at': datetime.now().isoformat()
+            })
+            
+            self.redis.set(self.detailed_progress_key, json.dumps(detailed_data), ex=3600)
+        except Exception as e:
+            logger.error(f"Failed to update proposals count: {e}")
+    
+    def finalize_progress(self, final_paths_count: int, final_modules_count: int):
+        """Mark progress as completed"""
+        if not self.detailed_progress_key:
+            return
+            
+        try:
+            from datetime import datetime
+            
+            # Get current progress
+            current_data = self.redis.get(self.detailed_progress_key)
+            if current_data:
+                detailed_data = json.loads(current_data)
+            else:
+                detailed_data = {}
+            
+            detailed_data.update({
+                'stage': 'completed',
+                'current_step': 'finalized',
+                'stage_description': f'Pathway generation complete: {final_paths_count} paths, {final_modules_count} modules',
+                'final_paths_count': final_paths_count,
+                'final_modules_count': final_modules_count,
+                'completed_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            })
+            
+            self.redis.set(self.detailed_progress_key, json.dumps(detailed_data), ex=300)  # Keep for 5 minutes
+            logger.info(f"Stage 3 completed: {final_paths_count} paths, {final_modules_count} modules")
+        except Exception as e:
+            logger.error(f"Failed to finalize progress: {e}")
 
 # =============================================================================
 # Main Stage 3 Processor
@@ -356,7 +584,7 @@ class S3ProgressTracker:
 
 def process_stage3(stage2_result: Stage2Result, target_complexity: ComplexityLevel = ComplexityLevel.INTERMEDIATE,
                   additional_instructions: str = "", task_id: str = None, 
-                  redis_client: redis.Redis = None) -> Stage3Result:
+                  redis_client: redis.Redis = None, course_id: str = None) -> Stage3Result:
     """
     Process Stage 3: Learning pathway generation
     
@@ -375,8 +603,15 @@ def process_stage3(stage2_result: Stage2Result, target_complexity: ComplexityLev
     # Initialize progress tracker
     progress_tracker = None
     if task_id and redis_client:
-        progress_tracker = S3ProgressTracker(redis_client, task_id)
+        progress_tracker = S3ProgressTracker(redis_client, task_id, course_id)
         progress_tracker.update_progress("stage3", 0, "Starting learning pathway generation")
+        
+        # Initialize detailed progress tracking
+        if course_id:
+            progress_tracker.initialize_detailed_progress(
+                len(stage2_result.document_analyses), 
+                target_complexity.value
+            )
     
     try:
         # Initialize learning path generator
@@ -391,7 +626,8 @@ def process_stage3(stage2_result: Stage2Result, target_complexity: ComplexityLev
             target_complexity=target_complexity,
             additional_instructions=additional_instructions,
             overview_context=getattr(stage2_result, 'overview_context', ''),
-            repo_name=getattr(stage2_result, 'repo_name', 'Documentation')
+            repo_name=getattr(stage2_result, 'repo_name', 'Documentation'),
+            progress_tracker=progress_tracker
         )
         
         # Use the last (best) proposal as the final learning paths
@@ -432,6 +668,7 @@ def process_stage3(stage2_result: Stage2Result, target_complexity: ComplexityLev
         if progress_tracker:
             total_modules = sum(len(path.modules) for path in learning_paths)
             progress_tracker.update_progress("stage3", 100, f"Stage 3 complete: {len(learning_paths)} paths, {total_modules} modules")
+            progress_tracker.finalize_progress(len(learning_paths), total_modules)
         
         logger.info(f"Stage 3 completed: {len(learning_paths)} learning paths generated with {len(debate_history)} debate rounds")
         return result
