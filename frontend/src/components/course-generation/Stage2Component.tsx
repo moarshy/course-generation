@@ -59,6 +59,7 @@ export default function Stage2Component({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedComplexity, setSelectedComplexity] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
 
   const {
     register,
@@ -78,22 +79,28 @@ export default function Stage2Component({
 
   // Load existing data on component mount
   useEffect(() => {
+    let mounted = true; // Guard against race conditions
+    
     const loadExistingData = async () => {
       try {
         const status = await getGenerationStatus(courseId).catch(() => null);
+        
+        if (!mounted) return; // Component unmounted, don't proceed
+        
         if (status?.stage_statuses?.DOCUMENT_ANALYSIS === 'completed') {
           setIsComplete(true);
           setHasStarted(true);
           
           // Load Stage 2 results
           const stage2Result = await getStage2Result(courseId);
-          setStage2Data(stage2Result);
+          if (mounted) setStage2Data(stage2Result);
         } else if (status?.stage_statuses?.DOCUMENT_ANALYSIS === 'in_progress') {
           setHasStarted(true);
           setPollingStatus(true);
           pollForStageCompletion();
-        } else if (status?.stage_statuses?.CLONE_REPO === 'completed') {
-          // Stage 1 is complete, auto-start Stage 2 with default values
+        } else if (status?.stage_statuses?.CLONE_REPO === 'completed' && 
+                   status?.stage_statuses?.DOCUMENT_ANALYSIS === 'pending') {
+          // Stage 1 is complete and Stage 2 is pending, auto-start Stage 2 with default values
           autoStartStage2();
         }
       } catch (err) {
@@ -102,15 +109,35 @@ export default function Stage2Component({
     };
 
     loadExistingData();
+    
+    return () => {
+      mounted = false; // Cleanup
+    };
   }, [courseId]);
 
   // Auto-start Stage 2 with default values
   const autoStartStage2 = async () => {
+    if (isStarting) {
+      return; // Prevent multiple starts
+    }
+    
+    // Double-check status before starting
+    try {
+      const status = await getGenerationStatus(courseId);
+      if (status?.stage_statuses?.DOCUMENT_ANALYSIS === 'in_progress' || 
+          status?.stage_statuses?.DOCUMENT_ANALYSIS === 'completed') {
+        return;
+      }
+    } catch (err) {
+      // Status check failed, continue with auto-start
+    }
+    
     const defaultData: Stage2FormData = {
       complexity_level: 'beginner',
       additional_info: ''
     };
     
+    setIsStarting(true);
     setHasStarted(true);
     setSelectedComplexity(defaultData.complexity_level);
     
@@ -123,12 +150,19 @@ export default function Stage2Component({
     } catch (err: any) {
       setError(err.detail || 'Failed to start document analysis');
       setHasStarted(false);
+    } finally {
+      setIsStarting(false);
     }
   };
 
   // Start Stage 2 analysis
   const handleStartAnalysis = async (data: Stage2FormData) => {
+    if (isStarting) {
+      return; // Prevent multiple starts
+    }
+    
     setLoading(true);
+    setIsStarting(true);
     setError(null);
     setHasStarted(true);
     setSelectedComplexity(data.complexity_level);
@@ -144,6 +178,7 @@ export default function Stage2Component({
       setHasStarted(false);
     } finally {
       setLoading(false);
+      setIsStarting(false);
     }
   };
 
@@ -195,6 +230,12 @@ export default function Stage2Component({
 
   // Handle document editing
   const handleEditDocument = (docId: string, content: string, keyConcepts: string[] = [], learningObjectives: string[] = []) => {
+    // Prevent editing if analysis is still in progress
+    if (pollingStatus) {
+      setError('Cannot edit documents while analysis is in progress. Please wait for completion.');
+      return;
+    }
+    
     setEditingDoc(docId);
     setEditedContent(content);
     setEditedKeyConcepts(keyConcepts);
@@ -492,7 +533,12 @@ export default function Stage2Component({
                         </div>
                         <button
                           onClick={() => handleEditDocument(doc.id, doc.content, getKeyConcepts(doc), getLearningObjectives(doc))}
-                          className="flex items-center space-x-2 px-4 py-2 text-sm text-blue-600 hover:bg-blue-100 rounded-lg transition-colors font-medium"
+                          disabled={pollingStatus}
+                          className={`flex items-center space-x-2 px-4 py-2 text-sm rounded-lg transition-colors font-medium ${
+                            pollingStatus 
+                              ? 'text-gray-400 cursor-not-allowed' 
+                              : 'text-blue-600 hover:bg-blue-100'
+                          }`}
                         >
                           <Edit className="w-4 h-4" />
                           <span>Edit</span>
@@ -670,7 +716,12 @@ export default function Stage2Component({
                             <div className="mt-3 text-center">
                               <button
                                 onClick={() => handleEditDocument(doc.id, doc.content, getKeyConcepts(doc), getLearningObjectives(doc))}
-                                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                                disabled={pollingStatus}
+                                className={`text-sm font-medium ${
+                                  pollingStatus 
+                                    ? 'text-gray-400 cursor-not-allowed' 
+                                    : 'text-blue-600 hover:text-blue-700'
+                                }`}
                               >
                                 View Full Content
                               </button>

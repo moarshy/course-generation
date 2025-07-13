@@ -9,22 +9,18 @@ from backend.routers import users, health, projects, course_generation
 
 # Configure logging
 logging.basicConfig(
-    level=logging.WARNING,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
     ]
 )
 
-# Set specific loggers to INFO level for important operations
-logging.getLogger("backend.services.user_service").setLevel(logging.INFO)
-logging.getLogger("backend.services.course_service").setLevel(logging.INFO)
-logging.getLogger("backend.services.repository_clone_service").setLevel(logging.INFO)
-logging.getLogger("backend.services.document_analyser_service").setLevel(logging.INFO)
-logging.getLogger("backend.services.learning_pathway_service").setLevel(logging.INFO)
-logging.getLogger("backend.services.modules_generation_service").setLevel(logging.INFO)
-logging.getLogger("backend.routers.course_generation").setLevel(logging.INFO)
-logging.getLogger("backend.worker.tasks").setLevel(logging.INFO)
+# Suppress noisy library logs
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 

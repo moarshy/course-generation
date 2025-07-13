@@ -166,48 +166,74 @@ def save_stage2_data(course_id: str, stage2_result):
     """Save Stage 2 analyzed documents to database with improved transaction handling"""
     db = get_db_session()
     try:
-        # Clear existing analyzed documents
-        db.query(AnalyzedDocument).filter(AnalyzedDocument.course_id == course_id).delete()
-        
-        # Save analyzed documents - stage2_result is a dictionary, not an object
+        # Update existing documents instead of deleting them to preserve IDs
         if 'document_analyses' in stage2_result:
             for doc_analysis in stage2_result['document_analyses']:
+                file_path = doc_analysis.get('file_path', '')
+                
+                # Find existing document by file path
+                existing_doc = db.query(AnalyzedDocument).filter(
+                    AnalyzedDocument.course_id == course_id,
+                    AnalyzedDocument.file_path == file_path
+                ).first()
+                
                 # Robust data validation with defaults
                 doc_type = doc_analysis.get('doc_type')
                 if doc_type is None or doc_type == '' or doc_type == 'None':
                     doc_type = 'guide'  # Default fallback
-                    logger.warning(f"Document {doc_analysis.get('file_path', 'unknown')} had invalid doc_type, setting to 'guide'")
+                    logger.warning(f"Document {file_path} had invalid doc_type, setting to 'guide'")
                 
                 complexity_level = doc_analysis.get('complexity_level')
                 if complexity_level is None or complexity_level == '' or complexity_level == 'None':
                     complexity_level = 'intermediate'  # Default fallback
-                    logger.warning(f"Document {doc_analysis.get('file_path', 'unknown')} had invalid complexity_level, setting to 'intermediate'")
+                    logger.warning(f"Document {file_path} had invalid complexity_level, setting to 'intermediate'")
                 
                 title = doc_analysis.get('title')
                 if title is None or title == '' or title == 'None':
                     # Extract filename as fallback title
-                    file_path = doc_analysis.get('file_path', '')
                     title = Path(file_path).stem if file_path else 'Untitled Document'
                     logger.warning(f"Document {file_path} had invalid title, setting to '{title}'")
                 
-                analyzed_doc = AnalyzedDocument(
-                    course_id=course_id,
-                    file_path=doc_analysis.get('file_path', ''),
-                    title=title,
-                    doc_type=doc_type,
-                    complexity_level=complexity_level,
-                    key_concepts=json.dumps(doc_analysis.get('key_concepts', [])),
-                    learning_objectives=json.dumps(doc_analysis.get('learning_objectives', [])),
-                    summary=doc_analysis.get('semantic_summary', ''),
-                    prerequisites=json.dumps(doc_analysis.get('prerequisites', [])),
-                    related_topics=json.dumps(doc_analysis.get('related_topics', [])),
-                    headings=json.dumps(doc_analysis.get('headings', [])),
-                    code_languages=json.dumps(doc_analysis.get('code_languages', [])),
-                    frontmatter=json.dumps(doc_analysis.get('frontmatter', {})),
-                    doc_metadata=json.dumps(doc_analysis.get('metadata', {})),
-                    word_count=doc_analysis.get('word_count', 0)
-                )
-                db.add(analyzed_doc)
+                if existing_doc:
+                    # Update existing document (preserve ID and any user edits)
+                    existing_doc.title = title
+                    existing_doc.doc_type = doc_type
+                    existing_doc.complexity_level = complexity_level
+                    # Only update AI-generated fields, preserve user edits
+                    if not existing_doc.key_concepts or existing_doc.key_concepts == '[]':
+                        existing_doc.key_concepts = json.dumps(doc_analysis.get('key_concepts', []))
+                    if not existing_doc.learning_objectives or existing_doc.learning_objectives == '[]':
+                        existing_doc.learning_objectives = json.dumps(doc_analysis.get('learning_objectives', []))
+                    if not existing_doc.summary:
+                        existing_doc.summary = doc_analysis.get('semantic_summary', '')
+                    existing_doc.prerequisites = json.dumps(doc_analysis.get('prerequisites', []))
+                    existing_doc.related_topics = json.dumps(doc_analysis.get('related_topics', []))
+                    existing_doc.headings = json.dumps(doc_analysis.get('headings', []))
+                    existing_doc.code_languages = json.dumps(doc_analysis.get('code_languages', []))
+                    existing_doc.frontmatter = json.dumps(doc_analysis.get('frontmatter', {}))
+                    existing_doc.doc_metadata = json.dumps(doc_analysis.get('metadata', {}))
+                    existing_doc.word_count = doc_analysis.get('word_count', 0)
+                    existing_doc.analyzed_at = datetime.utcnow()
+                else:
+                    # Create new document
+                    analyzed_doc = AnalyzedDocument(
+                        course_id=course_id,
+                        file_path=file_path,
+                        title=title,
+                        doc_type=doc_type,
+                        complexity_level=complexity_level,
+                        key_concepts=json.dumps(doc_analysis.get('key_concepts', [])),
+                        learning_objectives=json.dumps(doc_analysis.get('learning_objectives', [])),
+                        summary=doc_analysis.get('semantic_summary', ''),
+                        prerequisites=json.dumps(doc_analysis.get('prerequisites', [])),
+                        related_topics=json.dumps(doc_analysis.get('related_topics', [])),
+                        headings=json.dumps(doc_analysis.get('headings', [])),
+                        code_languages=json.dumps(doc_analysis.get('code_languages', [])),
+                        frontmatter=json.dumps(doc_analysis.get('frontmatter', {})),
+                        doc_metadata=json.dumps(doc_analysis.get('metadata', {})),
+                        word_count=doc_analysis.get('word_count', 0)
+                    )
+                    db.add(analyzed_doc)
         
         # Commit all documents first
         db.commit()

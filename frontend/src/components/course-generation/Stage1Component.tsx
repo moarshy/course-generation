@@ -88,16 +88,12 @@ export default function Stage1Component({
             getStage1Selections(courseId).catch(() => ({ include_folders: [] } as Stage1Input))
           ]);
           
-          console.log('Stage 1 result:', stage1Result);
-          console.log('Stage 1 selections from API:', stage1Selections);
-          
           setStage1Data(stage1Result);
           // Map API response field names to frontend expected field names
           const restoredSelections = {
             include_folders: (stage1Selections as any)?.selected_folders || stage1Selections?.include_folders || [],
             overview_doc: (stage1Selections as any)?.overview_document || stage1Selections?.overview_doc
           };
-          console.log('Restored selections:', restoredSelections);
           setSelections(restoredSelections);
         }
       } catch (err) {

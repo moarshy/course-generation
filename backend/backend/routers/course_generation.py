@@ -340,6 +340,8 @@ async def get_stage2_result(
                 detail=result['error']
             )
         
+        logger.info(f"📤 Returning Stage 2 results with {result['total_documents']} documents")
+        
         return Stage2Response(
             processed_files_count=result['total_documents'],
             failed_files_count=0,  # We don't track this separately now
@@ -366,9 +368,6 @@ async def update_document_metadata(
 ):
     """Update document metadata"""
     try:
-        logger.info(f"🔄 Updating document metadata for course {course_id}")
-        logger.info(f"📝 Update request: {update_request}")
-        
         # Verify course ownership
         if not course_service.verify_course_ownership(course_id, current_user_id):
             raise HTTPException(
@@ -384,13 +383,11 @@ async def update_document_metadata(
         )
         
         if 'error' in result:
-            logger.error(f"❌ Failed to update document metadata: {result['error']}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=result['error']
             )
         
-        logger.info(f"✅ Successfully updated document metadata for document {update_request.document_id}")
         return result
         
     except HTTPException:
